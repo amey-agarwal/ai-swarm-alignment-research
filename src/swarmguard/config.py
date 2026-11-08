@@ -8,6 +8,7 @@ falling back to defaults.
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -33,8 +34,10 @@ class _Strict(BaseModel):
 
 
 class RunCfg(_Strict):
-    mode: Literal["dev", "cluster"] = "dev"
-    backend: Literal["stub", "vllm"] = "stub"
+    # local = exploratory runs against Ollama on 127.0.0.1 without OS-level isolation;
+    # always waived network probes, so never analysable (safety score < 1.0).
+    mode: Literal["dev", "cluster", "local"] = "dev"
+    backend: Literal["stub", "vllm", "ollama"] = "stub"
     seed: int = Field(0, ge=0, le=2**31 - 1)
 
 
@@ -230,6 +233,11 @@ class Config(_Strict):
     def _mode_backend(self) -> "Config":
         if self.run.mode == "dev" and self.run.backend == "vllm":
             raise ValueError("vllm backend is refused in dev mode")
+        if (self.run.backend == "ollama") != (self.run.mode == "local"):
+            raise ValueError("the ollama backend requires local mode, and local mode requires the ollama backend")
+        if self.run.mode == "local" and self.sandbox.network_isolation != "unavailable":
+            raise ValueError("local mode has no OS-level isolation: set sandbox.network_isolation=unavailable "
+                             "with a written justification (see configs/local_ollama.yaml)")
         return self
 
     @property
@@ -280,12 +288,29 @@ class ModelEntry(_Strict):
     optional: bool = False
     revision: str | None = None  # pin before real runs
     dtype: Literal["bfloat16"] = "bfloat16"
+    # Ollama tag for local exploratory runs (quantized; not comparable with bf16 cluster runs).
+    ollama_tag: str | None = None
 
     @field_validator("hf_id")
     @classmethod
     def _no_banned(cls, v: str) -> str:
         if any(b in v.lower() for b in BANNED_MODEL_SUBSTRINGS):
             raise ValueError(f"model {v!r} is not allowed")
+        return v
+
+    @field_validator("ollama_tag")
+    @classmethod
+    def _ollama_tag_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        low = v.lower()
+        if any(b in low for b in BANNED_MODEL_SUBSTRINGS):
+            raise ValueError(f"ollama tag {v!r} is not allowed")
+        # Ollama "cloud" tags proxy prompts to a remote service: never allowed.
+        if "cloud" in low:
+            raise ValueError(f"ollama tag {v!r} is a cloud model (prompts would leave the machine)")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*(:[a-z0-9._-]+)?", low):
+            raise ValueError(f"ollama tag {v!r} is malformed")
         return v
 
 

@@ -20,6 +20,8 @@ dependencies = [
 dev = ["pytest>=7"]
 # Installed in the container only; required by the governor in cluster mode.
 cluster = ["pynvml", "psutil", "openai"]
+# Local exploratory mode: Ollama on 127.0.0.1 via the OpenAI-compatible API (never analysable).
+local = ["psutil", "openai"]
 # Offline analysis (logistic regression, figures). Core metrics and CIs need none of these.
 analysis = ["numpy", "pandas", "scipy", "statsmodels", "matplotlib"]
 

@@ -36,6 +36,8 @@ from swarmguard.tasks.base import TASK_SPECS, get_task
 
 DEFAULT_ROOT = REPO_ROOT  # repo checked by pass 1 / postflight (tests point this at a temp copy)
 PORT_ENV = "SWARM_VLLM_PORT"
+LOCAL_JUDGE_REFUSED = ("judge is not available in local mode: the judge must be a different model family "
+                       "(gemma-3-27b) run on the cluster; local runs are exploratory and never analysable")
 Out = Callable[[str], None]
 
 
@@ -138,7 +140,12 @@ def _passes(mapping: dict[str, Any], mode: str, root: Path, env: dict[str, str]
 
 def _client(cfg: Config, rd: RunDir, model_key: str, responder=None) -> tuple[LLMClient, str, str | None]:
     entry = load_models()[model_key]
-    backend = make_backend(cfg, model_id=entry.hf_id, model_revision=entry.revision,
+    model_id = entry.hf_id
+    if cfg.run.backend == "ollama":
+        if not entry.ollama_tag:
+            raise LLMError(f"model {model_key!r} has no ollama_tag in configs/models.yaml")
+        model_id = entry.ollama_tag
+    backend = make_backend(cfg, model_id=model_id, model_revision=entry.revision,
                            stub_responder=responder or route())
     return LLMClient(backend, ResponseCache(rd, cfg.cache.max_bytes)), backend.model_id, backend.model_revision
 
@@ -281,6 +288,8 @@ def judge_run(run_id: str, *, out_root: Path = Path("runs"), mode: str = "dev", 
 
     root = root or DEFAULT_ROOT
     env = _env(env)
+    if mode == "local" or backend == "ollama":
+        return Outcome(2, LOCAL_JUDGE_REFUSED)
     try:
         rd = RunDir.open_existing(out_root, run_id)
         run_cfg, meta = _load_run_config(rd)
@@ -395,6 +404,8 @@ def judge_validate(labels_path: Path, *, out_root: Path = Path("runs"), mode: st
 
     root = root or DEFAULT_ROOT
     env = _env(env)
+    if mode == "local" or backend == "ollama":
+        return Outcome(2, LOCAL_JUDGE_REFUSED)
     try:
         human = load_labels(labels_path)
     except (OSError, ValueError) as exc:

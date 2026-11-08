@@ -4,6 +4,9 @@ dev mode: container/Slurm probes (network, writes outside the run dir) are repor
 as "skipped (dev)" and are not attempted, so dev runs make no network requests.
 cluster mode: every probe runs inside a Slurm job; a skipped probe fails the pass. Outside a
 Slurm job, cluster-mode network/write probes are failed without being attempted.
+local mode (Ollama on a laptop): network/write probes are never attempted and are recorded as
+"waived" (requires sandbox.network_isolation=unavailable + justification); postflight counts
+them as containment failures, so local runs are never analysable.
 
 If the platform cannot isolate the network, the network probes fail. The only
 fallback is `sandbox.network_isolation: unavailable` plus a written justification,
@@ -64,6 +67,16 @@ def _outside_job(env: Any = None) -> bool:
 NOT_IN_JOB = "not attempted: not inside a Slurm job (fail closed)"
 
 
+def _local_waived(name: str, cfg: Config, what: str) -> CheckResult:
+    """local mode: no container or namespace exists, so the probe is NOT attempted (no outbound
+    traffic, no probe files in the repo or $HOME) and is recorded as waived. Postflight counts a
+    waived probe as a containment failure, so local runs never reach safety score 1.0."""
+    if cfg.sandbox.network_isolation != "unavailable":
+        return _fail(name, "local mode without sandbox.network_isolation=unavailable")
+    return CheckResult(name, "waived", f"not attempted (local: no {what}); "
+                                       f"WAIVED: {cfg.sandbox.network_isolation_justification}")
+
+
 def _network_outcome(name: str, cfg: Config, succeeded: bool, detail: str) -> CheckResult:
     if not succeeded:
         return _pass(name, detail)
@@ -80,6 +93,8 @@ def probe_tcp(cfg: Config, mode: str, connect: Callable[..., Any] = socket.creat
     name = "net_tcp_external"
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
+    if mode == "local":
+        return _local_waived(name, cfg, "network namespace")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
     try:
@@ -98,6 +113,8 @@ def probe_dns(cfg: Config, mode: str, resolve: Callable[..., Any] = socket.getad
     name = "net_dns_external"
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
+    if mode == "local":
+        return _local_waived(name, cfg, "network namespace")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
     try:
@@ -115,10 +132,15 @@ def default_write_targets() -> list[Path]:
     return targets
 
 
-def probe_write_outside(mode: str, targets: list[Path] | None = None, env: Any = None) -> CheckResult:
+def probe_write_outside(mode: str, targets: list[Path] | None = None, env: Any = None,
+                        cfg: Config | None = None) -> CheckResult:
     name = WRITE_PROBE
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
+    if mode == "local":
+        if cfg is None:
+            return _fail(name, "local mode probe needs the config")
+        return _local_waived(name, cfg, "read-only mounts")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
     targets = default_write_targets() if targets is None else targets
@@ -260,7 +282,7 @@ def run_pass2(cfg: Config, mode: str | None = None) -> PassResult:
     res.checks += [
         probe_tcp(cfg, mode),
         probe_dns(cfg, mode),
-        probe_write_outside(mode),
+        probe_write_outside(mode, cfg=cfg),
         probe_bus(mode),
         probe_parser(mode, max_tokens=cfg.messages.max_tokens),
         probe_governor(cfg, mode),
