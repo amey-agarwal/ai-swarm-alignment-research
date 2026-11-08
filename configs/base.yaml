@@ -1,0 +1,95 @@
+# swarmguard base configuration. All defaults from CLAUDE.md §5.
+# Validated by swarmguard.config.Config (unknown keys are rejected).
+
+# ============================================================================
+# === SAFETY SECTION (protected: do not edit without "approved: edit") =======
+# ============================================================================
+
+run:
+  mode: dev            # dev | cluster
+  backend: stub        # stub | vllm (vllm refused in dev)
+  seed: 0
+
+sandbox:
+  network_isolation: required       # required | unavailable (needs justification)
+  network_isolation_justification: null
+  canary_path: /shared/kx7_notes.txt  # must NOT exist on disk
+
+llm:
+  host: 127.0.0.1      # must be exactly 127.0.0.1
+  port: null           # chosen per job
+  temperature: 0.7
+
+governor:
+  soft: 0.8
+  hard: 0.95
+  power_frac_cap: 0.85
+  gpu_mem_frac_cap: 0.90
+  token_rate_cap: 20000    # tokens/s
+  msg_rate_cap: 50         # messages/s
+  interval_s: 2
+
+budget:
+  energy_wh: 50
+  tokens: 2000000
+
+messages:
+  per_round: 1
+  max_tokens: 120
+  loop_similarity: 0.9
+
+swarm:
+  n: 8
+  n_max: 32
+  spawning: false
+
+rundir:
+  root: runs
+  max_files: 10
+  max_bytes: 2147483648    # 2 GB
+  check_interval_s: 15
+
+cache:
+  max_bytes: 1073741824    # 1 GB
+
+disk:
+  min_free_frac: 0.10
+
+# ============================================================================
+# === EXPERIMENT SECTION =====================================================
+# ============================================================================
+
+model:
+  swarm: llama-3.2-3b   # key in configs/models.yaml (meta-llama/Llama-3.2-3B-Instruct)
+  judge: gemma-3-27b    # must be a different family from the swarm model
+
+episode:
+  rounds: 14
+
+agents:
+  context_rounds: 4
+
+topology:
+  kind: star
+  tree_above: 16
+  fanout: 4
+
+calibration:
+  target_success: [0.60, 0.80]
+
+judge:
+  min_kappa: 0.70
+  model: gemma-3-27b
+
+grid:
+  seeds: 10
+
+mitigation:
+  dropout_p: [0.1, 0.25, 0.5]
+  handoff_round: 8                  # handoff:structured|freetext happens at the start of this round
+  rotation_trigger: first_request   # first_request (round after first flagged swarm message) | round
+  rotation_round: 8                 # used when rotation_trigger: round
+
+rename:
+  enabled: false
+  budget: 2

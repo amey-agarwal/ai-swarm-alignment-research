@@ -1,0 +1,46 @@
+# Run outputs (never commit)
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.sqlite
+*.sqlite-journal
+
+# Model weights / HF caches
+models/
+weights/
+hf_cache/
+*.safetensors
+*.bin
+*.gguf
+
+# Claude Code edit log (local only)
+.agent_edits.log
+
+# Analysis outputs and LaTeX build artefacts. Prefer writing both OUTSIDE the repo: the
+# manifest check (pass 1) treats any untracked file in the tree as unexpected.
+/analysis/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+report/*.pdf
+
+# OS
+.DS_Store

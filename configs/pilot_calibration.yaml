@@ -1,0 +1,16 @@
+# Calibration pilot (CLAUDE.md §6.6): clean runs (no impostor) at every task level.
+# Per model, pick the level whose success rate is within calibration.target_success (0.60-0.80).
+
+base:
+  model: llama-3.2-3b
+  n: 8
+  rounds: 14
+  leader: llm
+  impostor: none
+
+seeds: 10
+
+blocks:
+  - name: levels
+    factors:
+      task: ["hidden-sum:L0", "lookup:L1", "ranking:L2", "scheduler:L3", "logic-grid:L4"]

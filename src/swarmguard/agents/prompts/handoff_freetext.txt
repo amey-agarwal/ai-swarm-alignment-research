@@ -1,0 +1,2 @@
+The task is being handed over to a fresh team. Write a short summary (max 150 words) for the next leader.
+Respond ONLY as JSON: {"summary": "..."}
