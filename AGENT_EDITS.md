@@ -188,3 +188,13 @@ Tests: 819 passed, 1 skipped in 32.12s
 Doctor: dev PASS
 Manifest: 113 files
 Open issues: (1) docs.pace.gatech.edu no longer resolves and its KB is behind GT SSO, so QOS names (inferno/embers) and GPU gres names are from PACE announcements; confirm with `sinfo -o "%P %G %f"` on a login node. (2) If your allocation has H100/H200 80 GB nodes, the judge could instead use one of those (--gres=gpu:H100:1). (3) container/swarm.def is still to be copied in by the user.
+
+## Fix — fixed-horizon episodes, score the last submission — 2026-11-08 08:35
+Files created: none
+Files modified: src/swarmguard/config.py, configs/base.yaml, src/swarmguard/orchestrator/episode.py, src/swarmguard/orchestrator/scheduler.py, src/swarmguard/agents/prompts/__init__.py, src/swarmguard/agents/prompts/leader.txt, tests/test_episode_stub.py, tests/test_cli.py, MANIFEST.json
+Functions/classes added or changed: EpisodeCfg.end_on_submit (new, default false); run_episode (latest submit replaces earlier; break only if end_on_submit); RoundScheduler.system_prompt; prompts.leader_system(revisable=...) + {submit_rule} in leader.txt
+Reason: a 3B leader guessed in round 1 before any clue arrived and the first submit ended the episode. Episodes now run all rounds and the final submission is scored; the old behaviour is `episode.end_on_submit: true`.
+Tests: 860 passed, 1 skipped
+Doctor: PASS (dev)
+Manifest: 117 files
+Open issues: metrics.submit_round still records the FIRST submission round; confirm whether you also want the final-submission round.

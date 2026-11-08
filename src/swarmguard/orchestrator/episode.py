@@ -15,6 +15,7 @@ Log records written here (in addition to scheduler.py):
                clue_assignment, model_id, impostor, claim, impostor_clue}
     comprehension {agent, status, capabilities, registered}   (post-episode probe; never delivered)
     run_end   {stop_reason, detail, rounds_completed, submitted, success, n_outputs, tokens, trace}
+              (submitted = the leader's last submission; scored once the episode ends)
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import yaml
 
 from swarmguard import __version__
 from swarmguard.agents.agent import Agent
-from swarmguard.agents.llm_client import LLMClient
+from swarmguard.agents.llm_client import CacheMiss, LLMClient
 from swarmguard.agents.scripted_leader import ScriptedLeader
 from swarmguard.impostor import MODES as IMPOSTOR_MODES
 from swarmguard.impostor import make_impostor
@@ -48,6 +49,7 @@ from swarmguard.schemas import RunReport
 from swarmguard.tasks.base import TaskInstance, make_instance
 from swarmguard.tasks.distribute import distribute, impostor_clue
 from swarmguard.verifiers.comprehension import run_probe
+from swarmguard.transcript import write_transcript
 from swarmguard.verifiers.tracer import Tracer
 
 StopReason = Literal["submitted", "rounds_exhausted", "killswitch", "governor", "signal", "error"]
@@ -257,7 +259,14 @@ def run_episode(
             active_swarm = sum(1 for a in sched.agents if a in topo.swarm_ids)
             if active_swarm > n:
                 raise AssertionError("population exceeded n")
-            res = sched.step(r, min(conc, spec.concurrency))
+            try:
+                res = sched.step(r, min(conc, spec.concurrency))
+            except CacheMiss:
+                raise  # replay from cache must fail loudly, never degrade into a different run
+            except Exception as exc:  # noqa: BLE001 - backend/model failure: end cleanly, keep the log valid
+                stop, detail = "error", f"round {r}: {type(exc).__name__}: {str(exc)[:300]}"
+                log.append({"type": "error", "round": r, "detail": detail})
+                break
             mit.after_round(r, tracer.summary)
             completed, outputs = r, outputs + active_swarm
             tokens += res.tokens + mtok
@@ -267,15 +276,17 @@ def run_episode(
                 governor.record_tokens(res.tokens + mtok)
                 governor.record_messages(res.delivered)
             if res.submitted is not None:
-                submitted, stop = res.submitted, "submitted"
-                break
+                submitted = res.submitted  # the latest submission replaces earlier ones
+                if cfg.episode.end_on_submit:
+                    stop = "submitted"
+                    break
             if pause:
                 time.sleep(pause)
 
         success = submitted is not None and task.check(submitted)
         agents = sched.agents
         probe_agents = [agents[a] for a in sorted(agents) if a in topo.swarm_ids and a not in sched.scripted]
-        if spec.comprehension and client is not None and probe_agents and stop != "governor":
+        if spec.comprehension and client is not None and probe_agents and stop not in ("governor", "error"):
             recs, ptok = run_probe(probe_agents, sched.system_prompt, client, claim=claim, run_seed=cfg.run.seed,
                                    rounds=rounds, concurrency=spec.concurrency)
             for rec in recs:
@@ -285,13 +296,14 @@ def run_episode(
                 governor.record_tokens(ptok)
         if impostor is not None:
             save_session(impostor.turns)
-        if stop in ("killswitch", "governor", "signal"):
+        if stop in ("killswitch", "governor", "signal", "error"):
             write_checkpoint(rd, {"round": completed, "reason": detail, "stop_reason": stop})
         log.append({"type": "run_end", "stop_reason": stop, "detail": detail, "rounds_completed": completed,
                     "submitted": submitted, "success": success, "n_outputs": outputs, "tokens": tokens,
                     "trace": tracer.summary.to_dict()})
     finally:
         log.close()
+    write_transcript(rd)  # human-readable view; rendered from the closed, hash-chained log
     return EpisodeResult(stop, detail, completed, submitted, success, outputs, tokens, loops, dropped, agents)
 
 

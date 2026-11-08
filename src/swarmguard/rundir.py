@@ -19,6 +19,7 @@ ALLOWED_FILES = frozenset(
         "checkpoint.json",
         "log.jsonl.gz",
         "STOP",  # kill-switch control file (§4.9); created by the user / `swarm stop`
+        "transcript.txt",  # human-readable view of log.jsonl (swarmguard.transcript); never used for metrics
     }
 )
 

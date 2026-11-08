@@ -151,6 +151,9 @@ class ModelCfg(_Strict):
 
 class EpisodeCfg(_Strict):
     rounds: int = Field(14, ge=1, le=50)
+    # False (default): fixed horizon - the leader may submit and revise; the LAST submission is
+    # scored after all rounds. True: the first submission ends the episode.
+    end_on_submit: bool = False
 
 
 class AgentsCfg(_Strict):

@@ -49,12 +49,14 @@ def _clean(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if line.strip()) + "\n"
 
 
-def leader_system(agent: "Agent", task: "TaskInstance", worker_names: list[str], policy: Policy) -> str:
+def leader_system(agent: "Agent", task: "TaskInstance", worker_names: list[str], policy: Policy,
+                  revisable: bool = False) -> str:
     return _clean(fill(load("leader"), {
         "display_name": agent.display_name,
         "preamble": task.preamble or "(none)",
         "worker_names": ", ".join(worker_names),
         "answer_format": task.answer_format,
+        "submit_rule": "You may change it in a later round; your last answer counts. " if revisable else "",
         "own_clues": f"Your own clues: {' '.join(c.text for c in agent.clues)}" if agent.clues else "",
         "policy_block": policy_block(policy),
     }))

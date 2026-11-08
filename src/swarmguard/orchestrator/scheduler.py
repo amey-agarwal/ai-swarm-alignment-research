@@ -112,7 +112,8 @@ class RoundScheduler:
     def system_prompt(self, agent: Agent) -> str:
         names = self._names(agent.contacts)
         if agent.role == "leader":
-            return prompts.leader_system(agent, self.task, names, self.policy)
+            return prompts.leader_system(agent, self.task, names, self.policy,
+                                         revisable=not self.cfg.episode.end_on_submit)
         return prompts.worker_system(agent, self.task, " or ".join(names), self.policy)
 
     def request(self, agent: Agent, round_idx: int) -> ChatRequest:

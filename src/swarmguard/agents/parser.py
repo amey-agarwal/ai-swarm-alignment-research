@@ -28,6 +28,11 @@ from pydantic import ValidationError
 from swarmguard.schemas import MAX_CONTENT_CHARS, LeaderMessage, WorkerMessage
 
 MAX_RAW_BYTES = 16 * 1024
+# Length bound used in the constrained-decoding schemas. Messages are capped at max_tokens
+# (<= 512, default 120) and truncated by the parser anyway; this only has to be generous.
+# Kept well below the schema's MAX_CONTENT_CHARS backstop because llama.cpp/Ollama's grammar
+# converter rejects very large string repetition bounds ("failed to parse grammar" above ~1500).
+DECODE_MAX_CHARS = 1000
 TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
@@ -168,7 +173,15 @@ def parse_leader_output(raw: Any, *, allowed_recipients: Collection[str], max_to
     for m in msg.messages:
         if m.to not in allowed_recipients:
             raise ParseError("recipient", m.to)
+    if is_empty_submit(msg.submit):
+        # Grammar-constrained decoders tend to fill a free-form field with {} rather than null.
+        # No task accepts an empty answer, so treat it as "not submitting yet".
+        msg = LeaderMessage(messages=msg.messages, submit=None)
     return ParsedLeader(msg, sum(count_tokens(m.content) for m in msg.messages), truncated)
+
+
+def is_empty_submit(value: Any) -> bool:
+    return value is None or value == {} or value == [] or (isinstance(value, str) and not value.strip())
 
 
 # ----------------------------------------------------------------------------- schemas for constrained decoding
@@ -179,7 +192,7 @@ def worker_json_schema(allowed_recipients: Collection[str]) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "to": {"type": "string", "enum": sorted(allowed_recipients)},
-            "content": {"type": "string", "maxLength": MAX_CONTENT_CHARS},
+            "content": {"type": "string", "maxLength": DECODE_MAX_CHARS},
         },
         "required": ["to", "content"],
         "additionalProperties": False,
@@ -197,7 +210,7 @@ def leader_json_schema(allowed_recipients: Collection[str]) -> dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "to": {"type": "string", "enum": sorted(allowed_recipients)},
-                        "content": {"type": "string", "maxLength": MAX_CONTENT_CHARS},
+                        "content": {"type": "string", "maxLength": DECODE_MAX_CHARS},
                     },
                     "required": ["to", "content"],
                     "additionalProperties": False,

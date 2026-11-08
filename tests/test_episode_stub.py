@@ -48,8 +48,47 @@ def _run(tmp_path, cfg, spec, responder=None, **kw):
 
 
 def test_scripted_leader_stub_workers_solve_l0(tmp_path):
+    # fixed horizon (default): a submission does not end the episode; all rounds run
     rd, res = _run(tmp_path, _cfg(), EpisodeSpec(task="hidden-sum:L0", seed=0, leader="scripted"))
+    assert res.success and res.stop_reason == "rounds_exhausted" and res.rounds_completed == 14
+    assert min(r["round"] for r in _records(rd) if r["type"] == "submit") == 2
+
+
+def test_end_on_submit_stops_at_first_submission(tmp_path):
+    cfg = _cfg(episode={"rounds": 14, "end_on_submit": True})
+    rd, res = _run(tmp_path, cfg, EpisodeSpec(task="hidden-sum:L0", seed=0, leader="scripted"))
     assert res.success and res.stop_reason == "submitted" and res.rounds_completed == 2
+
+
+def _reviser(early, late):
+    """Leader submits `early` in round 1 and `late` from round 3 on; workers use the stub."""
+    def respond(req):
+        if "messages" in req.schema()["properties"]:
+            sub = early if req.round == 1 else late if req.round >= 3 else None
+            return json.dumps({"messages": [], "submit": sub})
+        return route()(req)
+    return respond
+
+
+def test_last_submission_is_scored(tmp_path):
+    spec = EpisodeSpec(task_instance=reference_instance(), assignment=REFERENCE_ASSIGNMENT)
+    wrong = {**REFERENCE_ANSWER, "Ana": REFERENCE_ANSWER["Ben"], "Ben": REFERENCE_ANSWER["Ana"]}
+    _, fixed = _run(tmp_path / "a", _cfg(n=5, rounds=5), spec, responder=_reviser(wrong, REFERENCE_ANSWER))
+    assert fixed.success and fixed.submitted == REFERENCE_ANSWER and fixed.rounds_completed == 5
+    _, broke = _run(tmp_path / "b", _cfg(n=5, rounds=5), spec, responder=_reviser(REFERENCE_ANSWER, wrong))
+    assert not broke.success and broke.submitted == wrong
+
+
+def test_leader_prompt_says_last_answer_counts(tmp_path):
+    seen = {}
+
+    def spy(req):
+        seen[req.agent_id] = req.messages[0][1]
+        return route()(req)
+    _run(tmp_path / "a", _cfg(rounds=1), EpisodeSpec(task="L0"), responder=spy)
+    assert "your last answer counts" in seen["a00"]
+    _run(tmp_path / "b", _cfg(episode={"rounds": 1, "end_on_submit": True}), EpisodeSpec(task="L0"), responder=spy)
+    assert "your last answer counts" not in seen["a00"]
 
 
 def test_scripted_leader_solves_reference_l4(tmp_path):
@@ -79,7 +118,7 @@ def test_message_bound_and_log_contract(tmp_path, repo_copy):
     assert max(Counter((r["round"], r["agent"]) for r in outs).values()) == 1
     assert all(r["n_tokens"] <= cfg.messages.max_tokens for r in outs)
     assert verify(rd.file("log.jsonl")).ok
-    assert sorted(p.name for p in rd.entries()) == ["cache.sqlite", "config.yaml", "log.jsonl"]
+    assert sorted(p.name for p in rd.entries()) == ["cache.sqlite", "config.yaml", "log.jsonl", "transcript.txt"]
     report, problems = run_postflight(cfg, rd, pass1_ok=True, pass2_ok=True, probe_results=PROBES_OK,
                                       governor_summary={"peak_cpi": 0.1, "energy_wh": 0, "tokens": res.tokens},
                                       root=repo_copy)
@@ -239,3 +278,19 @@ def test_worker_prompt_matches_template():
     assert s.startswith("You are W1, a worker on a team solving a puzzle. Your clues: ")
     assert 'Respond ONLY as JSON: {"to": "Leader", "content": "..."}' in s
     assert "{" + "contact_name}" not in s and "{display_name}" not in s
+
+
+def test_backend_error_ends_episode_cleanly(tmp_path, repo_copy):
+    def flaky(req):
+        if req.round == 3:
+            raise RuntimeError("backend exploded")
+        return route()(req)
+    cfg = _cfg(rounds=6)
+    rd, res = _run(tmp_path, cfg, EpisodeSpec(task="L4", seed=1), responder=flaky)
+    assert res.stop_reason == "error" and "backend exploded" in res.detail and res.rounds_completed == 2
+    recs = _records(rd)
+    assert recs[-1]["type"] == "run_end" and any(r["type"] == "error" for r in recs)
+    assert verify(rd.file("log.jsonl")).ok and read_checkpoint(rd)["stop_reason"] == "error"
+    report, _ = run_postflight(cfg, rd, pass1_ok=True, pass2_ok=True, probe_results=PROBES_OK,
+                               governor_summary={"peak_cpi": 0, "energy_wh": 0, "tokens": res.tokens}, root=repo_copy)
+    assert report.checks["integrity.hash_chain_valid"]

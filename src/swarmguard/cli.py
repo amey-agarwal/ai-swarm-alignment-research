@@ -248,6 +248,21 @@ def status(run_id: str = typer.Argument(...), out: Path = typer.Option(Path("run
 
 
 @app.command()
+def transcript(
+    run_id: str = typer.Argument(...),
+    out: Path = typer.Option(Path("runs"), "--out"),
+    show: bool = typer.Option(False, "--print", help="also print the transcript"),
+) -> None:
+    """(Re)build a run's human-readable transcript.txt from its log."""
+    from swarmguard.runner import transcript_run
+
+    oc = transcript_run(run_id, out_root=out)
+    if oc.exit_code == 0 and show:
+        typer.echo(Path(oc.extra["path"]).read_text(encoding="utf-8"))
+    _finish(oc)
+
+
+@app.command()
 def stop(run_id: str = typer.Argument(...), out: Path = typer.Option(Path("runs"), "--out")) -> None:
     """Request a graceful stop (writes the STOP file; the run stops at its next round)."""
     from swarmguard.runner import stop_run

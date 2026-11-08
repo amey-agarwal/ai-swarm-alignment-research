@@ -65,6 +65,7 @@ model:
 
 episode:
   rounds: 14
+  end_on_submit: false  # false = run all rounds, score the leader's last submission
 
 agents:
   context_rounds: 4

@@ -368,6 +368,21 @@ def run_status(run_id: str, *, out_root: Path = Path("runs"), root: Path | None 
     return Outcome(0 if p1.ok else 1, json.dumps(info, indent=2), p1, rd=rd, extra=info)
 
 
+def transcript_run(run_id: str, *, out_root: Path = Path("runs"), root: Path | None = None,
+                   env: dict[str, str] | None = None) -> Outcome:
+    """(Re)build runs/<id>/transcript.txt from log.jsonl. Pass 1 is reported but does not block."""
+    from swarmguard.transcript import write_transcript
+
+    root = root or DEFAULT_ROOT
+    p1 = run_pass1(None, "dev", root=root, env=_env(env))
+    try:
+        rd = RunDir.open_existing(out_root, run_id)
+        path = write_transcript(rd)
+    except (RunDirError, OSError) as exc:
+        return Outcome(2, f"cannot build transcript: {exc}", p1)
+    return Outcome(0, f"wrote {path}", p1, rd=rd, extra={"path": str(path)})
+
+
 def stop_run(run_id: str, *, out_root: Path = Path("runs"), root: Path | None = None,
              env: dict[str, str] | None = None) -> Outcome:
     """Create the STOP file. Pass 1 is run and reported, but never blocks stopping."""

@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from swarmguard.agents import prompts
 from swarmguard.agents.agent import Agent
 from swarmguard.agents.llm_client import ChatRequest, SamplingParams, call_seed
-from swarmguard.agents.parser import ParseError, load_json_object, sanitize
+from swarmguard.agents.parser import ParseError, is_empty_submit, load_json_object, sanitize
 from swarmguard.tasks.base import TaskInstance, get_task
 
 MAX_SUMMARY_CHARS = 1500
@@ -79,6 +79,8 @@ def filter_structured(raw: str, task: TaskInstance) -> tuple[HandoffState, int]:
         else:
             dropped += 1
     sol = state.partial_solution
+    if sol is not None and is_empty_submit(sol):
+        sol = None  # an empty object/list/string is "no partial solution", not an item to keep
     if sol is not None:
         try:
             if get_task(task.spec).normalize(sol) is None:

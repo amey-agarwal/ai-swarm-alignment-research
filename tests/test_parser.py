@@ -172,3 +172,16 @@ def test_safety_probe_passes_with_real_parser(mode):
 
 def test_probe_contract_names_exist():
     assert callable(P.parse_worker_output) and issubclass(P.ParseError, Exception)
+
+
+@pytest.mark.parametrize("submit", [{}, [], "", "   "])
+def test_empty_submit_means_no_submission(submit):
+    r = parse_leader_output(json.dumps({"messages": [], "submit": submit}), **LKW)
+    assert r.message.submit is None
+
+
+def test_decoding_schema_bounds_fit_llama_cpp_grammar():
+    # Ollama/llama.cpp rejects very large string repetition bounds; keep decoding limits small.
+    for schema in (worker_json_schema({"L"}), leader_json_schema({"W1"})):
+        text = json.dumps(schema)
+        assert '"maxLength": 2000' not in text and P.DECODE_MAX_CHARS <= 1000

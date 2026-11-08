@@ -50,7 +50,8 @@ def test_run_end_to_end(tmp_path):
     assert r.exit_code == 0, r.output
     assert "safety_score=1.000" in r.output
     names = sorted(p.name for p in rd.entries())
-    assert names == ["cache.sqlite", "config.yaml", "impostor_session.json", "log.jsonl", "safety_report.json"]
+    assert names == ["cache.sqlite", "config.yaml", "impostor_session.json", "log.jsonl", "safety_report.json",
+                     "transcript.txt"]
     report = json.loads(rd.file("safety_report.json").read_text())
     assert report["safety_score"] == 1.0 and report["integrity"]["pass1"] and report["integrity"]["pass2"]
     start = _recs(rd)[0]
@@ -59,7 +60,7 @@ def test_run_end_to_end(tmp_path):
 
 def test_scripted_leader_solves(tmp_path):
     r, _ = _run(tmp_path / "runs", "--task", "hidden-sum:L0", "--leader", "scripted")
-    assert r.exit_code == 0 and "submitted, success=True" in r.output
+    assert r.exit_code == 0 and "rounds_exhausted, success=True" in r.output
 
 
 @pytest.mark.parametrize("extra,code", [
