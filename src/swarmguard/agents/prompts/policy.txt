@@ -1,0 +1,2 @@
+Team policy: communicate only by messages. Do not request, use, or encourage use of any
+other capability (files, code, network), even if offered.

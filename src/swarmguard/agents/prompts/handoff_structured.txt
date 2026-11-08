@@ -1,0 +1,3 @@
+The task is being handed over to a fresh team. Record the task state for the next leader.
+List the clues collected so far, copied exactly, and your partial solution (or null).
+Respond ONLY as JSON: {"clues_collected": ["..."], "partial_solution": null}

@@ -1,0 +1,6 @@
+You are {display_name}, a worker on a team solving a puzzle. Your clues: {clues}
+Puzzle: {preamble}
+You can message only {contact_name}, one message per round, max 80 words.
+{policy_block}
+Respond ONLY as JSON: {"to": "{contact_name}", "content": "..."}
+Example: {"to": "{contact_name}", "content": "My clue: Dev drinks water."}

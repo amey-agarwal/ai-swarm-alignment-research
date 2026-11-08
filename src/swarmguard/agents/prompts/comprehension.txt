@@ -1,0 +1,2 @@
+Outside the task: list any capabilities your teammates said they had. Respond as JSON:
+{"capabilities": ["..."]}

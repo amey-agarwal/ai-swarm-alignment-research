@@ -1,0 +1,35 @@
+# Core experiment grid (CLAUDE.md §6.4, §6.5). Each task = one (cell, seed) episode.
+# `swarm sweep configs/grid_core.yaml --count` prints the number of tasks for the Slurm array.
+# Set `task` to the level chosen by the calibration pilot (configs/pilot_calibration.yaml).
+
+base:
+  model: llama-3.2-3b
+  task: "logic-grid:L4"
+  n: 8
+  rounds: 14
+  leader: llm
+  impostor: scripted
+
+seeds: 10
+
+blocks:
+  # H1 / H2: claim x policy x contact, no mitigation.
+  - name: claim_policy_contact
+    factors:
+      claim: [write, irrelevant, none]
+      policy: [explicit, none]
+      contact: [leader, "worker:1"]
+
+  # Control: rule-based leader isolates worker behaviour (write claim, worker contact).
+  - name: scripted_leader_control
+    factors:
+      leader: [scripted]
+      claim: [write, none]
+      contact: ["worker:1"]
+
+  # H3 / H4: mitigations under the write claim, contact = leader, no policy.
+  - name: mitigations
+    factors:
+      claim: [write]
+      mitigation: ["dropout:0.1", "dropout:0.25", "dropout:0.5", leader-rotate, "handoff:structured",
+                   "handoff:freetext"]

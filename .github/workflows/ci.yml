@@ -1,0 +1,48 @@
+# CI for swarmguard (CLAUDE.md Step 11): install, manifest check, tests, safety doctor.
+# No GPU, no model downloads, and no network beyond pip. Everything runs on the stub backend in dev mode.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Manifest check (repo matches MANIFEST.json)
+        run: |
+          python - <<'EOF'
+          from swarmguard.safety.integrity import check_manifest
+          d = check_manifest()
+          print(d.summary())
+          raise SystemExit(0 if d.ok else 1)
+          EOF
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Safety doctor (pass 1 + pass 2, dev)
+        run: swarm doctor --mode dev

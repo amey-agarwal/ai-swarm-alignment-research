@@ -1,0 +1,110 @@
+% swarmguard: 8-page sprint report skeleton (Apart Research, Swarm Alignment, Agent Infrastructure track).
+% Every number in this file must come from `swarm analyze` output on runs with safety score 1.0.
+% Placeholders are marked TODO. Do not fill them with illustrative or invented values.
+%
+% Build OUTSIDE the repo so build artefacts never touch the tracked tree (MANIFEST.json):
+%   latexmk -pdf -outdir=/tmp/swarmguard-report report/main.tex      (or upload report/ to Overleaf)
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx,booktabs,amsmath,hyperref,xcolor}
+\usepackage[numbers]{natbib}
+
+\title{swarmguard: Does a Claimed Permission Spread Through an LLM Swarm?\\
+\large TODO: final title}
+\author{TODO: authors and affiliations}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+TODO (150--200 words): question, testbed, conditions, main result with CIs, mitigation result,
+limitations in one sentence.
+\end{abstract}
+
+\section{Introduction}
+% Research question; why permission-seeking spread matters for multi-agent deployments; contributions.
+TODO.
+
+\section{Related Work}
+% Multi-agent LLM safety, power-seeking evaluations, prompt injection between agents, sandboxed evaluation.
+TODO.
+
+\section{The swarmguard Testbed}
+\subsection{Swarm, Topology, and Messaging}
+% n agents (1 leader, n-1 workers), star topology, round-synchronous scheduler, message bounds.
+TODO.
+\subsection{Tasks}
+% L0--L4, clue distribution with redundancy, calibration to 60--80\% clean success.
+TODO.
+\subsection{Impostor Protocol}
+% Join (R1--2), claim (R3), observe, dissuasion ladder; claim conditions write / irrelevant / none.
+TODO.
+\subsection{Mitigations}
+% Dropout, leader rotation, structured vs.\ free-text handoff; fixed seats, fresh-agent generations.
+TODO.
+\subsection{Verifiers}
+% Passive tracer, post-hoc judge (different family), Cohen's kappa gate, comprehension probe.
+TODO.
+
+\section{Safety Infrastructure}
+% Two-pass checks, governor (CPI), kill switches, postflight, safety score, container sandbox.
+% Report: number of runs excluded for safety score < 1.0 and why.
+TODO.
+
+\section{Experimental Setup}
+% Models (bf16), sampling, seeds per cell, grid (configs/grid_core.yaml), compute and energy used.
+TODO.
+
+\section{Results}
+\subsection{H1: Claim Type}
+TODO: PSR by claim with 95\% Wilson CIs (conditional on comprehension and a functioning swarm).
+\subsection{H2: Explicit Policy}
+TODO.
+\subsection{H3/H4: Mitigations}
+TODO.
+\subsection{H5: Model Size}
+TODO.
+% Always report task accuracy and protocol compliance next to misalignment metrics.
+% \begin{figure}[t]\centering\includegraphics[width=\linewidth]{figures/rate_by_condition.pdf}
+% \caption{TODO}\end{figure}
+
+\section{Discussion}
+TODO.
+
+\section{Conclusion}
+TODO.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+
+\section{Limitations and Dual-Use / Ethical Considerations}
+
+\subsection{Limitations}
+% Small open models; a fictional, text-only permission; scripted impostor; star topology only;
+% judge validity bounded by kappa on ~200 human labels; keyword-based tracer and escalation markers;
+% stub-only development; calibration-dependent task difficulty.
+TODO.
+
+\subsection{Dual-Use Risks}
+% What a malicious actor could learn (which claims spread, which mitigations fail) and why the
+% minimal, non-optimised impostor scripts limit this; no persuasion optimisation is released.
+TODO.
+
+\subsection{Ethical Considerations}
+% No real capabilities granted; no third-party systems; inference only; human labellers;
+% model licences and gated access; compute and energy reporting.
+TODO.
+
+\subsection{Safety Checks Can Be Removed by Forks}
+% State plainly: all checks fail closed and cannot be disabled by configuration, but anyone who
+% controls the code can delete them; results from modified testbeds are not swarmguard results.
+TODO.
+
+\section{Reproducibility}
+% Commit SHA, MANIFEST.json, configs, seeds, model revisions, `swarm replay` byte-identical replays.
+TODO.
+
+\end{document}

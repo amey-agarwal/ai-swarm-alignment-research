@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "swarmguard"
+version = "0.0.1"
+description = "Sandboxed testbed for studying misalignment in hierarchical LLM agent swarms"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "Aditya Kulkarni" }]
+dependencies = [
+    "pydantic>=2",
+    "pyyaml>=6",
+    "typer>=0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+# Installed in the container only; required by the governor in cluster mode.
+cluster = ["pynvml", "psutil", "openai"]
+# Offline analysis (logistic regression, figures). Core metrics and CIs need none of these.
+analysis = ["numpy", "pandas", "scipy", "statsmodels", "matplotlib"]
+
+[project.scripts]
+swarm = "swarmguard.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"swarmguard.agents.prompts" = ["*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

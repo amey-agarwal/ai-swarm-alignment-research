@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(./container/**)",
+      "Write(./container/**)",
+      "Edit(./.claude/**)",
+      "Write(./.claude/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/protect_paths.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/log_edit.py\""
+          }
+        ]
+      }
+    ]
+  }
+}
