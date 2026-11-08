@@ -101,6 +101,14 @@ def test_models_yaml_loads_and_has_no_banned_models():
             assert banned not in key.lower() and banned not in m.hf_id.lower()
 
 
+def test_default_swarm_and_judge_models_are_pinned():
+    import re
+
+    models, cfg = load_models(), load_config()
+    for key in (cfg.model.swarm, cfg.model.judge):
+        assert re.fullmatch(r"[0-9a-f]{40}", models[key].revision or ""), f"{key} revision not pinned"
+
+
 def test_banned_model_rejected(tmp_path):
     p = tmp_path / "m.yaml"
     p.write_text(

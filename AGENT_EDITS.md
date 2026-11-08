@@ -158,3 +158,13 @@ Tests: 817 passed, 1 skipped in 35.29s (skip = container recipe test until conta
 Doctor: dev PASS (run with CLAUDE_CODE_MESSAGING_TOKEN unset)
 Manifest: 113 files (final for P0; container/swarm.def still to be copied in by the user, then regenerate)
 Open issues: (1) Report contains only TODO placeholders and no invented numbers or citations; references.bib is empty on purpose. (2) SECURITY.md points to GitHub private vulnerability reporting (enable it in repo settings); no personal contact is published. (3) The manifest exclusion list lives in protected safety/integrity.py, so analysis output and LaTeX builds must go outside the repo (README says so); the only in-repo output dir excluded is runs/. (4) Checked that no manifest file is gitignored and every git-visible file is in the manifest, so a clean clone matches. (5) Before going public, the user confirms with their PI (CLAUDE.md §16). (6) The safety/** lock is still not activated.
+
+## Post-P0 fix 1 — Pin model revisions — 2026-11-08 03:40
+Files created: none
+Files modified: configs/models.yaml (revision for llama-3.2-3b and gemma-3-27b, plus download commands), tests/test_config.py (default swarm/judge must be pinned), tests/test_preflight.py (unpinned check now uses phi-4-mini; pinned defaults pass), AGENT_EDITS.md, MANIFEST.json
+Functions/classes added or changed: tests only
+Reason: Cluster runs refuse unpinned models. Pinned meta-llama/Llama-3.2-3B-Instruct@0cb88a4f764b7a12671c53f0838cd831a0843b95 and google/gemma-3-27b-it@005ad3404e59d6023443cb575daa05336842228a (Hugging Face API `sha`, 2026-11-08). Checked vllm==0.8.5.post1: it exists on PyPI (Python >=3.9,<3.13); supports Llama, Gemma 3 (text-only) and Phi-4-mini; maps response_format json_schema to guided_json in protocol.py at the tag; accepts --generation-config vllm, --enable-prefix-caching, --max-num-seqs, --max-model-len and --disable-log-requests.
+Tests: 819 passed, 1 skipped
+Doctor: dev PASS
+Manifest: 113 files
+Open issues: other models (phi-4-mini, llama-3.1-8b, gemma-3-12b, optional ones) remain unpinned and are refused in cluster/vllm mode until pinned. Still open: container/swarm.def (user copy), Slurm account/QOS, 80 GB constraint for the judge.

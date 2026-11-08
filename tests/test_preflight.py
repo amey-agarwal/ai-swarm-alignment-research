@@ -59,8 +59,15 @@ def test_cluster_env_ok_but_skips_fail_the_pass(repo_copy):
 
 
 def test_cluster_vllm_requires_pinned_revisions(repo_copy):
-    res = run_pass1({"run": {"backend": "vllm"}}, "cluster", root=repo_copy, env=CLUSTER_ENV)
+    # phi-4-mini has no pinned revision yet -> refused for real cluster runs
+    res = run_pass1({"run": {"backend": "vllm"}, "model": {"swarm": "phi-4-mini"}}, "cluster", root=repo_copy,
+                    env=CLUSTER_ENV)
     assert _status(res, "models") == "fail" and "revision not pinned" in res.get("models").detail
+
+
+def test_cluster_vllm_pinned_defaults_pass_models_check(repo_copy):
+    res = run_pass1({"run": {"backend": "vllm"}}, "cluster", root=repo_copy, env=CLUSTER_ENV)
+    assert _status(res, "models") == "pass", res.get("models").detail
 
 
 def test_vllm_in_dev_fails_config(repo_copy, clean_env):
