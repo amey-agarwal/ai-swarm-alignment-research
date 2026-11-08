@@ -31,7 +31,12 @@ HF_ID="$(python -c 'import sys; from swarmguard.config import load_models; print
 WEIGHTS="/weights/${HF_ID}"
 [[ -d "${WEIGHTS}" ]] || { echo "weights not found: ${WEIGHTS} (download them before the job)" >&2; exit 1; }
 
+# Tensor parallelism across every GPU Slurm granted (1 for the 3B swarm model; 2 x 40 GB A100
+# for the 27B judge).
+TP="$(python -c 'import torch; print(max(1, torch.cuda.device_count()))')"
+
 vllm serve "${WEIGHTS}" \
+    --tensor-parallel-size "${TP}" \
     --host 127.0.0.1 --port "${SWARM_VLLM_PORT}" --api-key "${SWARM_VLLM_API_KEY}" \
     --served-model-name "${HF_ID}" --dtype bfloat16 \
     --max-num-seqs "${VLLM_MAX_NUM_SEQS:-32}" --max-model-len "${VLLM_MAX_MODEL_LEN:-8192}" \

@@ -103,20 +103,23 @@ Other options: `--contact worker:3`, `--policy explicit`, `--leader scripted`,
 
 1. **Hypotheses:** finalise and commit [docs/hypotheses.md](docs/hypotheses.md) before any real run.
 2. **Models:** verify each Hugging Face ID and licence in [configs/models.yaml](configs/models.yaml)
-   (Llama and Gemma are gated), download the weights to a weights directory as `<hf_id>/`, and pin
-   every `revision` (cluster runs with vLLM refuse unpinned revisions). The swarm model is
-   `llama-3.2-3b`; the judge is `gemma-3-27b` (different family, needs an 80 GB GPU).
+   (Llama and Gemma are gated) and download the **pinned** revisions to `$SWARM_WEIGHTS/<hf_id>/`
+   (commands at the top of that file; cluster runs with vLLM refuse unpinned revisions). The swarm
+   model is `llama-3.2-3b`; the judge is `gemma-3-27b` (different family, 2 × 40 GB A100).
 3. **Container:** `apptainer build swarm.sif container/swarm.def` (vLLM pinned; verify the pin first).
 4. **Calibrate:** run [configs/pilot_calibration.yaml](configs/pilot_calibration.yaml) and choose the
    task level with 60–80 % clean success; set it in [configs/grid_core.yaml](configs/grid_core.yaml).
-5. **Run the grid:**
+5. **Run the grid** (on PACE, from a login node or an Open OnDemand terminal):
    ```bash
    export SWARM_REPO=$PWD SWARM_SIF=/path/swarm.sif SWARM_WEIGHTS=/path/weights SWARM_RUNS=/path/runs
+   export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno SALLOC_ACCOUNT=gts-<pi> SALLOC_QOS=inferno
    swarm sweep configs/grid_core.yaml --count        # 200 tasks
    sbatch --array=0-19%4 slurm/sweep_array.sbatch configs/grid_core.yaml
    ```
-6. **Judge and validate:** `ACTION=judge MODEL_KEY=gemma-3-27b sbatch slurm/run_single.sbatch <run_id>`
-   for each run. For κ, open `bash slurm/interactive.sh gemma-3-27b` and, in the container shell, run
+6. **Judge and validate:** Gemma-3-27B (~54 GB in bf16) does not fit one 40 GB A100, so request two
+   (vLLM splits it with tensor parallelism):
+   `ACTION=judge MODEL_KEY=gemma-3-27b sbatch --gres=gpu:A100:2 slurm/run_single.sbatch <run_id>`
+   for each run. For κ, open `SWARM_GPUS=2 bash slurm/interactive.sh gemma-3-27b` and, in the container shell, run
    `swarm judge --validate data/labels/<file>.jsonl --mode cluster --backend vllm --out /runs`
    on the ~200 human-labelled messages.
 7. **Analyse:** `swarm analyze $SWARM_RUNS --agreement <validation_run>/metrics.json --out ../swarmguard-analysis/`.

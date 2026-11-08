@@ -31,11 +31,15 @@ def test_sbatch_limits(name):
     assert "#SBATCH --signal=B:USR1@120" in t
     assert "#SBATCH --gres=gpu:A100:1" in t
     assert 'source "${SWARM_REPO:?set SWARM_REPO}/slurm/common.sh"' in t
+    # charge account / QOS come from Slurm's own env vars; nothing personal is hard-coded
+    assert "SBATCH_ACCOUNT" in t and "SBATCH_QOS" in t
+    assert not re.search(r"^#SBATCH --(account|qos)=", t, re.MULTILINE)
 
 
 def test_interactive_limits():
     t = _text("interactive.sh")
-    for flag in ("--gres=gpu:A100:1", "--time=02:00:00", "--signal=B:USR1@120", "salloc", "srun --pty"):
+    for flag in ('--gres="gpu:A100:${SWARM_GPUS:-1}"', "--time=02:00:00", "--signal=B:USR1@120", "salloc",
+                 "srun --pty", "SALLOC_ACCOUNT", "SALLOC_QOS"):
         assert flag in t
 
 
@@ -55,6 +59,7 @@ def test_common_sandbox_flags():
 def test_entry_vllm_flags():
     t = _text("container_entry.sh")
     assert "--host 127.0.0.1" in t and '--api-key "${SWARM_VLLM_API_KEY}"' in t
+    assert '--tensor-parallel-size "${TP}"' in t and "torch.cuda.device_count()" in t
     assert "--enable-prefix-caching" in t and "--max-num-seqs" in t and "--dtype bfloat16" in t
     assert "--disable-log-requests" in t  # prompts are not echoed to the Slurm log
     assert 'startswith("/repo/src/")' in t  # runs the manifest-checked repo code only

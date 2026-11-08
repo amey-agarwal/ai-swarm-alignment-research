@@ -12,9 +12,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --output=slurm-%x-%A_%a.out
-# PACE: set your charge account and QOS, e.g.
-##SBATCH --account=gts-<pi>
-##SBATCH --qos=inferno
+# PACE charge account / QOS: Slurm reads them from the environment, so nothing personal is
+# committed here. Before submitting:
+#   export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno      # or SBATCH_QOS=embers (free, preemptible)
 set -euo pipefail
 source "${SWARM_REPO:?set SWARM_REPO}/slurm/common.sh"
 

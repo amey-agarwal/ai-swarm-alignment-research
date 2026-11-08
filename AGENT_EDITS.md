@@ -168,3 +168,13 @@ Tests: 819 passed, 1 skipped
 Doctor: dev PASS
 Manifest: 113 files
 Open issues: other models (phi-4-mini, llama-3.1-8b, gemma-3-12b, optional ones) remain unpinned and are refused in cluster/vllm mode until pinned. Still open: container/swarm.def (user copy), Slurm account/QOS, 80 GB constraint for the judge.
+
+## Post-P0 fix 2 — PACE Slurm settings — 2026-11-08 03:58
+Files created: none
+Files modified: slurm/run_single.sbatch, slurm/sweep_array.sbatch, slurm/interactive.sh (account/QOS via Slurm's SBATCH_*/SALLOC_* env vars; SWARM_GPUS for interactive GPU count), slurm/container_entry.sh (vLLM --tensor-parallel-size = visible GPU count), README.md (PACE submit instructions, judge on 2 x A100), tests/test_slurm_scripts.py, AGENT_EDITS.md, MANIFEST.json
+Functions/classes added or changed: none (scripts/docs/tests)
+Reason: PACE (Georgia Tech) needs a charge account and QOS; these are personal, so they come from Slurm's own environment variables instead of being committed. PACE's public posts document Phoenix A100s as 40 GB (`--gres=gpu:A100:1|2`) with no documented 80 GB option, and Gemma-3-27B bf16 (~54 GB) needs two GPUs, so the judge requests --gres=gpu:A100:2 and vLLM uses tensor parallelism across the granted GPUs.
+Tests: 819 passed, 1 skipped in 32.12s
+Doctor: dev PASS
+Manifest: 113 files
+Open issues: (1) docs.pace.gatech.edu no longer resolves and its KB is behind GT SSO, so QOS names (inferno/embers) and GPU gres names are from PACE announcements; confirm with `sinfo -o "%P %G %f"` on a login node. (2) If your allocation has H100/H200 80 GB nodes, the judge could instead use one of those (--gres=gpu:H100:1). (3) container/swarm.def is still to be copied in by the user.
