@@ -121,7 +121,7 @@ class SafetyReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: str
-    mode: Literal["dev", "cluster"]
+    mode: Literal["dev", "cluster", "local"]
     network_isolation: Literal["required", "unavailable"]
     network_isolation_justification: str | None = None
     containment: Containment

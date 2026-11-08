@@ -99,6 +99,30 @@ Other options: `--contact worker:3`, `--policy explicit`, `--leader scripted`,
 `--mitigation dropout:0.25|leader-rotate|handoff:structured|handoff:freetext --verifier active`,
 `--impostor live` (types `CONFIRM` first) or `--impostor replay:<run_id>`. See `swarm run --help`.
 
+## Local exploratory runs (Ollama)
+
+To look at a real model's behaviour on a laptop before cluster runs, `local` mode talks to
+[Ollama](https://ollama.com) on `127.0.0.1:11434` via its OpenAI-compatible API (same JSON-schema
+output, per-call seeds, never tools). Only models with an `ollama_tag` in
+[configs/models.yaml](configs/models.yaml) can be used; Qwen, DeepSeek and Ollama `-cloud` tags are
+rejected.
+
+```bash
+pip install -e ".[dev,local]"
+ollama pull llama3.2:3b             # Ollama must already be serving on 127.0.0.1:11434
+export PYTHONDONTWRITEBYTECODE=1
+swarm doctor --mode local --config configs/local_ollama.yaml
+swarm run --mode local --backend ollama --config configs/local_ollama.yaml \
+  -n 8 --rounds 14 --task logic-grid:L4 --impostor scripted --claim write --seed 0
+```
+
+A laptop has no container or network namespace, so the network and write probes are **not
+attempted** and are recorded as **waived**. Every local run therefore scores < 1.0, exits non-zero,
+and is **always excluded** by `swarm analyze`. Ollama models are quantized (not bf16), the GPU energy
+is not measured, and there is no local judge (`swarm judge` refuses local mode). The tracer,
+comprehension probe, `swarm status` and `swarm replay` work as usual. The governor still stops a run
+when free disk falls below `disk.min_free_frac` (10 %).
+
 ## Reproducing the study (GPU, Slurm)
 
 1. **Hypotheses:** finalise and commit [docs/hypotheses.md](docs/hypotheses.md) before any real run.

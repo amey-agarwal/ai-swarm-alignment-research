@@ -1,0 +1,22 @@
+# Local exploratory runs against Ollama on this machine (e.g. a Mac laptop).
+# Merged over configs/base.yaml:  swarm run --mode local --backend ollama --config configs/local_ollama.yaml
+#
+# There is no container, no Slurm job and no OS-level network or filesystem isolation here.
+# The network and write probes are therefore never attempted and are recorded as WAIVED,
+# which puts the containment counters above 0: every local run scores < 1.0 and
+# `swarm analyze` always excludes it. Ollama models are quantized (not bf16), so results are
+# not comparable with cluster runs. Use this to look at model behaviour, not to report results.
+
+run:
+  mode: local
+  backend: ollama
+
+sandbox:
+  network_isolation: unavailable
+  network_isolation_justification: >-
+    Exploratory local run on a developer laptop against Ollama on 127.0.0.1. No container or
+    network namespace is available, so isolation probes are waived and the run is excluded
+    from analysis. Models remain text-in/text-out; nothing they output is executed.
+
+llm:
+  port: 11434          # Ollama's default port (host stays 127.0.0.1)

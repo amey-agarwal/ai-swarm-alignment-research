@@ -53,15 +53,15 @@ def _finish(outcome, show_passes: bool = False) -> None:
 
 @app.command()
 def doctor(
-    mode: str = typer.Option("dev", "--mode", help="dev | cluster"),
+    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local (local needs --config configs/local_ollama.yaml)"),
     config: Optional[Path] = typer.Option(None, "--config", help="extra YAML merged over configs/base.yaml"),
 ) -> None:
     """Run safety pass 1 (config + static) and pass 2 (live probes); print a table."""
     from swarmguard.safety.preflight import resolve_config, run_pass1
     from swarmguard.safety.probes import run_pass2
 
-    if mode not in ("dev", "cluster"):
-        raise typer.BadParameter("mode must be dev or cluster")
+    if mode not in ("dev", "cluster", "local"):
+        raise typer.BadParameter("mode must be dev, cluster or local")
     p1 = run_pass1(config, mode)
     _print_pass(p1)
     cfg, detail = resolve_config(config, mode)
@@ -139,8 +139,8 @@ def run(
                                    help="none | dropout:<p> | leader-rotate | handoff:structured | handoff:freetext"),
     rename: str = typer.Option("off", "--rename", help="off (rename is P2)"),
     verifier: str = typer.Option("passive", "--verifier", help="passive | active (mitigation arms)"),
-    mode: str = typer.Option("dev", "--mode", help="dev | cluster"),
-    backend: str = typer.Option("stub", "--backend", help="stub | vllm"),
+    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local (exploratory, never analysable)"),
+    backend: str = typer.Option("stub", "--backend", help="stub | vllm (cluster) | ollama (local)"),
     seed: int = typer.Option(0, "--seed"),
     out: Path = typer.Option(Path("runs"), "--out", help="root directory for run directories"),
     config: Optional[Path] = typer.Option(None, "--config", help="extra YAML merged over configs/base.yaml"),

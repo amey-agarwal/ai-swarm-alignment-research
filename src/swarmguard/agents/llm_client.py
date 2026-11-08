@@ -1,11 +1,12 @@
-"""LLM backends: deterministic stub (dev/tests) and localhost vLLM (cluster).
+"""LLM backends: deterministic stub (dev/tests), localhost vLLM (cluster) and
+localhost Ollama (local exploratory mode).
 
 This is the only module allowed to import a network client (enforced by the
 static scan in pass 1). Hard rules enforced here:
-- The vLLM host must be exactly 127.0.0.1.
+- The vLLM / Ollama host must be exactly 127.0.0.1.
 - Requests never carry tool / function-calling parameters (checked at runtime
   in `build_request` and statically by the scan).
-- The vLLM backend is refused in dev mode.
+- The vLLM backend is refused in dev mode; the Ollama backend only runs in local mode.
 - Per-call seed = hash(run_seed, agent_internal_id, round).
 - Cache key = SHA-256 of (model id, model revision, sampling params, messages, output schema).
 
@@ -206,10 +207,45 @@ class VLLMBackend:
         )
 
 
+class OllamaBackend(VLLMBackend):
+    """OpenAI-compatible client pointed at a local Ollama server on 127.0.0.1 (local mode only).
+
+    Same request as vLLM (chat messages, sampling incl. seed, JSON-schema response_format,
+    never tools). Ollama ignores the API key; the client library needs a non-empty one, so a
+    fixed placeholder is used (it is not a secret and never enters a prompt).
+    """
+
+    PLACEHOLDER_KEY = "ollama-local"
+
+    def __init__(self, model_tag: str, *, host: str, port: int, timeout_s: float = 300.0, client: Any = None):
+        check_host(host)
+        if not isinstance(port, int) or not 1024 <= port <= 65535:
+            raise LLMError(f"invalid port {port!r}")
+        self.model_id = model_tag
+        self.model_revision = f"ollama:{model_tag}"
+        if client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise LLMError("openai client not installed (pip install -e '.[local]')") from exc
+            client = OpenAI(base_url=f"http://{host}:{port}/v1", api_key=self.PLACEHOLDER_KEY,
+                            timeout=timeout_s, max_retries=0)
+        self._client = client
+
+
+OLLAMA_DEFAULT_PORT = 11434
+
+
 def make_backend(cfg: Config, *, model_id: str | None = None, model_revision: str | None = None,
                  port: int | None = None, stub_responder: Responder | None = None) -> Backend:
     if cfg.run.backend == "stub":
         return StubBackend(responder=stub_responder or default_responder)
+    if cfg.run.backend == "ollama":
+        if cfg.run.mode != "local":
+            raise LLMError("ollama backend is refused outside local mode")
+        if not model_id:
+            raise LLMError("an ollama tag is required for the ollama backend")
+        return OllamaBackend(model_id, host=cfg.llm.host, port=port or cfg.llm.port or OLLAMA_DEFAULT_PORT)
     if cfg.run.mode != "cluster":
         raise LLMError("vllm backend is refused outside cluster mode")
     if not model_id:

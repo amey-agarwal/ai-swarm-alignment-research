@@ -6,7 +6,8 @@ CPI = max(power / power_cap, gpu_mem / gpu_mem_cap, token_rate / token_rate_cap,
   CPI >= hard, or any budget exhausted, disk low, run-dir violation -> stop (latched)
 
 dev mode uses FakeMetricsProvider. cluster mode requires NVML (pynvml) and psutil;
-if either is unavailable the governor refuses to start (fail closed).
+if either is unavailable the governor refuses to start (fail closed). local mode uses
+LocalMetricsProvider (psutil only; no GPU power, so energy is not measured).
 Throttling concurrency is the control lever; GPU power limits are never set.
 """
 
@@ -106,11 +107,38 @@ class NvmlMetricsProvider:
         )
 
 
+class LocalMetricsProvider:
+    """local mode (Ollama on a laptop): CPU, RSS and disk via psutil. No GPU readings exist,
+    so GPU fields are None: CPI uses token/message rates and run-dir bytes only, and energy
+    stays 0 Wh (NOT measured). Raises GovernorError if psutil is unavailable (fail closed)."""
+
+    name = "local-psutil (no GPU power; energy not measured)"
+
+    def __init__(self, disk_path: str | Path = "."):
+        try:
+            import psutil
+        except ImportError as exc:
+            raise GovernorError(f"psutil unavailable: {exc}") from exc
+        self._psutil = psutil
+        self._proc = psutil.Process()
+        self._disk = str(disk_path)
+
+    def sample(self) -> HardwareSample:
+        du = shutil.disk_usage(self._disk)
+        return HardwareSample(
+            cpu_pct=self._psutil.cpu_percent(interval=None),
+            rss_bytes=self._proc.memory_info().rss,
+            disk_free_frac=du.free / du.total,
+        )
+
+
 def make_provider(mode: str, disk_path: str | Path = ".") -> MetricsProvider:
     if mode == "dev":
         return FakeMetricsProvider()
     if mode == "cluster":
         return NvmlMetricsProvider(disk_path)
+    if mode == "local":
+        return LocalMetricsProvider(disk_path)
     raise GovernorError(f"unknown mode {mode!r}")
 
 

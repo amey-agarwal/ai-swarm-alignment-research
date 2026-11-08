@@ -128,7 +128,8 @@ def run_postflight(
 
     containment = Containment(
         network_attempts_succeeded=_count(probe_results, NETWORK_PROBES, ("fail", "waived")),
-        writes_outside_rundir=_count(probe_results, [WRITE_PROBE], ("fail",)),
+        # A waived write probe (local mode: no read-only mounts) counts as not contained.
+        writes_outside_rundir=_count(probe_results, [WRITE_PROBE], ("fail", "waived")),
         outputs_executed=0 if static_ok else 1,
         routing_violations_accepted=routing_violations,
     )

@@ -240,6 +240,14 @@ def check_mode_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
         if cfg.run.backend != "stub":
             return _r("mode_backend_env", False, "dev mode requires the stub backend")
         return _r("mode_backend_env", True, "dev + stub")
+    if cfg.run.mode == "local":
+        problems = []
+        if cfg.run.backend != "ollama":
+            problems.append("local mode requires the ollama backend")
+        if cfg.sandbox.network_isolation != "unavailable":
+            problems.append("local mode requires sandbox.network_isolation=unavailable with a justification")
+        return _r("mode_backend_env", not problems,
+                  "; ".join(problems) or "local + ollama, NO OS isolation (exploratory; never analysable)")
     problems = []
     if not env.get("SLURM_JOB_ID"):
         problems.append("SLURM_JOB_ID unset (not inside a Slurm job)")
@@ -251,6 +259,11 @@ def check_mode_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
 def check_offline_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
     if cfg.run.mode == "dev":
         return CheckResult("offline_env", "skipped", "skipped (dev)")
+    if cfg.run.mode == "local":
+        # Ollama serves local weights; the Hugging Face offline vars do not apply.
+        ok = env.get("PYTHONDONTWRITEBYTECODE") == "1"
+        return _r("offline_env", ok, "PYTHONDONTWRITEBYTECODE=1 (HF offline vars n/a for ollama)" if ok
+                  else "PYTHONDONTWRITEBYTECODE not set to 1")
     need = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1"}
     bad = [k for k, v in need.items() if env.get(k) != v]
     return _r("offline_env", not bad, f"not set to 1: {bad}" if bad else "offline env vars set")
@@ -282,7 +295,11 @@ def check_models(cfg: Config) -> CheckResult:
         for m in (sw, jd):
             if m is not None and not m.revision:
                 problems.append(f"{m.hf_id}: revision not pinned (required in cluster mode)")
+    if cfg.run.mode == "local" and sw is not None and not sw.ollama_tag:
+        problems.append(f"{sw.hf_id}: no ollama_tag (required in local mode)")
     detail = "; ".join(problems) or f"swarm={sw.hf_id}, judge={jd.hf_id}"  # type: ignore[union-attr]
+    if not problems and cfg.run.mode == "local":
+        detail += f", ollama_tag={sw.ollama_tag} (quantized)"  # type: ignore[union-attr]
     return _r("models", not problems, detail)
 
 

@@ -25,6 +25,7 @@ models:
     license: llama3.2
     gated: true
     revision: 0cb88a4f764b7a12671c53f0838cd831a0843b95
+    ollama_tag: "llama3.2:3b"   # local exploratory mode only (Q4 quantized, not bf16)
   phi-4-mini:
     hf_id: microsoft/Phi-4-mini-instruct
     role: swarm
