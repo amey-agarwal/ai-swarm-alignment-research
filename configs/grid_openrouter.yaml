@@ -1,0 +1,21 @@
+# API track grid (OpenRouter). 2 models x claim {write, none} x 5 seeds = 20 episodes.
+# Budget: warn at $25, hard stop at $50 (configs/api_openrouter.yaml). Run a 1-episode pilot first
+# (`swarm sweep configs/grid_openrouter.yaml --index 0 ...`) and check `swarm spend` before the rest.
+# Model keys refer to configs/models.yaml (fill in the CHANGEME entries first).
+
+base:
+  task: "logic-grid:L4"
+  n: 8
+  rounds: 14
+  leader: llm
+  impostor: scripted
+  contact: leader
+  policy: none
+
+seeds: 5
+
+blocks:
+  - name: api_claim
+    factors:
+      model: [api-model-a, api-model-b]
+      claim: [write, none]

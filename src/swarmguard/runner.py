@@ -145,8 +145,13 @@ def _client(cfg: Config, rd: RunDir, model_key: str, responder=None) -> tuple[LL
         if not entry.ollama_tag:
             raise LLMError(f"model {model_key!r} has no ollama_tag in configs/models.yaml")
         model_id = entry.ollama_tag
+    providers = None
+    if cfg.run.backend == "openrouter":
+        if not entry.openrouter_id or entry.is_placeholder:
+            raise LLMError(f"model {model_key!r} is not a filled-in OpenRouter entry in configs/models.yaml")
+        model_id, providers = entry.openrouter_id, entry.providers
     backend = make_backend(cfg, model_id=model_id, model_revision=entry.revision,
-                           stub_responder=responder or route())
+                           stub_responder=responder or route(), providers=providers)
     return LLMClient(backend, ResponseCache(rd, cfg.cache.max_bytes)), backend.model_id, backend.model_revision
 
 
@@ -212,13 +217,26 @@ def execute_run(o: RunOptions, *, root: Path | None = None, env: dict[str, str] 
         if installed:
             ks.uninstall_signal_handlers()
 
+    summary = gov.summary()
+    if cfg.run.mode == "api":
+        summary["api"] = _api_summary(client)
     report, problems = run_postflight(cfg, rd, pass1_ok=p1.ok, pass2_ok=p2.ok, probe_results=p2.checks,
-                                      governor_summary=gov.summary(), root=root)
+                                      governor_summary=summary, root=root)
     msg = (f"run {rd.run_id}: {result.stop_reason}, success={result.success}, "
            f"rounds={result.rounds_completed}, safety_score={report.safety_score:.3f}")
     if problems:
         msg += "; postflight problems: " + "; ".join(problems)
     return Outcome(0 if report.safety_score == 1.0 else 1, msg, p1, p2, rd, result, report)
+
+
+def _api_summary(client) -> dict[str, Any] | None:
+    """Egress hosts, spend and the key's authoritative usage after the run (api mode)."""
+    backend = getattr(client, "backend", None)
+    if backend is None or not hasattr(backend, "api_summary"):
+        return None
+    s = backend.api_summary()
+    s["key_usage_end"] = backend.key_usage_now()
+    return s
 
 
 # ----------------------------------------------------------------------------- replay
@@ -296,6 +314,13 @@ def judge_run(run_id: str, *, out_root: Path = Path("runs"), mode: str = "dev", 
     except (RunDirError, OSError, KeyError) as exc:
         return Outcome(2, f"cannot load run {run_id}: {exc}")
     mapping = _deep_merge(run_cfg.model_dump(mode="json"), {"run": {"mode": mode, "backend": backend}})
+    if run_cfg.run.mode == "api":
+        # The judge never calls the swarm model: check the judge's config with the default open-weight
+        # swarm key (an OpenRouter swarm model is only valid in api mode). The run's own model id is
+        # still what the judge's different-family check uses (meta["model_id"]).
+        from swarmguard.config import load_config
+
+        mapping = _deep_merge(mapping, {"model": {"swarm": load_config().model.swarm}})
     if backend == "vllm" and env.get(PORT_ENV, "").isdigit():
         mapping = _deep_merge(mapping, {"llm": {"port": int(env[PORT_ENV])}})
     p1, p2, cfg = _passes(mapping, mode, root, env)
@@ -459,7 +484,8 @@ def judge_validate(labels_path: Path, *, out_root: Path = Path("runs"), mode: st
 
 
 def analyze(runs_root: Path, *, agreement_file: Path | None = None, by: list[str] | None = None,
-            out_dir: Path | None = None, root: Path | None = None, env: dict[str, str] | None = None) -> Outcome:
+            out_dir: Path | None = None, root: Path | None = None, env: dict[str, str] | None = None,
+            track: str = "main") -> Outcome:
     """Offline analysis of every analysable run under runs_root (pass 1 first)."""
     from swarmguard.analysis.metrics import collect, load_agreement
     from swarmguard.analysis.stats import conditional, logistic_regression, rate_table
@@ -469,11 +495,14 @@ def analyze(runs_root: Path, *, agreement_file: Path | None = None, by: list[str
     if not p1.ok:
         return Outcome(1, "safety pass 1 failed", p1)
     agreement_res, judge_model = (load_agreement(agreement_file) if agreement_file else (None, None))
-    aset = collect(runs_root, agreement=agreement_res, judge_model=judge_model)
+    if track not in ("main", "api"):
+        return Outcome(2, "--track must be main or api", p1)
+    aset = collect(runs_root, agreement=agreement_res, judge_model=judge_model, track=track)
     rows = aset.rows()
     by = by or ["claim", "policy", "mitigation"]
     judged = [r for r in rows if r["permission_seeking"] is not None]
     summary = {
+        "track": track,
         "n_included": len(rows), "excluded": [{"run_id": i, "reason": r} for i, r in aset.excluded],
         "judge_model": judge_model, "judge_metrics_available": len(judged),
         "judge_withheld": sorted({r["judge_withheld_reason"] for r in rows if r["judge_withheld_reason"]}),
@@ -502,11 +531,67 @@ def analyze(runs_root: Path, *, agreement_file: Path | None = None, by: list[str
 
             table = summary["psr_conditional"] if judged else summary["propagation_any"]
             title = "Permission-seeking rate (conditional)" if judged else "Episodes referencing the capability"
+            if track == "api":
+                title += " (API track: OpenRouter)"
             if table:
                 rate_bar(table, by, out_dir / "rate_by_condition.png", title=title)
                 rate_bar(table, by, out_dir / "rate_by_condition.pdf", title=title)
         except RuntimeError:
             pass
-    msg = (f"analysed {len(rows)} runs ({len(aset.excluded)} excluded); judge metrics for {len(judged)}"
+    msg = (f"[{track} track] analysed {len(rows)} runs ({len(aset.excluded)} excluded); judge metrics for {len(judged)}"
            + (f"; withheld: {summary['judge_withheld'][0]}" if summary["judge_withheld"] else ""))
     return Outcome(0, msg, p1, extra=summary)
+
+
+# ----------------------------------------------------------------------------- report
+
+
+def build_report_cmd(runs_root: Path, out_dir: Path, *, agreement_file: Path | None = None,
+                     root: Path | None = None, env: dict[str, str] | None = None, track: str = "cluster") -> Outcome:
+    """Report figures + tables + bundle (non-inference; pass 1 first). Only reportable runs are used:
+    safety score 1.0, cluster mode, a real model; judge metrics only behind a passing kappa."""
+    from swarmguard.analysis.report import ReportBuildError, build_report
+
+    root = root or DEFAULT_ROOT
+    p1 = run_pass1(None, "dev", root=root, env=_env(env))
+    if not p1.ok:
+        return Outcome(1, "safety pass 1 failed", p1)
+    try:
+        res = build_report(runs_root, out_dir, agreement_file=agreement_file, root=root, track=track)
+    except ReportBuildError as exc:
+        return Outcome(1, f"report not built: {exc}", p1)
+    except RuntimeError as exc:  # missing analysis extra
+        return Outcome(1, f"report not built: {exc}", p1)
+    msg = (f"report: {res['included']} runs ({res['excluded']} excluded), figures {', '.join(res['figures'])}; "
+           f"{res['note']} Bundle: {res['zip']}")
+    return Outcome(0, msg, p1, extra=res)
+
+
+# ----------------------------------------------------------------------------- spend (api track)
+
+SPEND_OK, SPEND_WARN, SPEND_HARD = 0, 10, 11
+
+
+def spend_cmd(config: Path | None = None, *, root: Path | None = None, env: dict[str, str] | None = None,
+              usage_fn=None) -> Outcome:
+    """Report the OpenRouter key's authoritative usage against the api budget. Exit codes:
+    0 below warn, 10 at/above usd_warn, 11 at/above usd_hard, 1 cannot read (fail closed).
+    Pass 1 is reported but does not block (monitoring command)."""
+    from swarmguard.agents.llm_client import key_usage_from_file
+    from swarmguard.config import load_config
+
+    root = root or DEFAULT_ROOT
+    p1 = run_pass1(None, "dev", root=root, env=_env(env))
+    try:
+        cfg = load_config(config)
+        u = (usage_fn or key_usage_from_file)(cfg.api.key_file)
+    except (LLMError, ValueError, OSError) as exc:
+        return Outcome(1, f"spend unknown (fail closed): {exc}", p1)
+    used = float(u.get("usage") or 0.0)
+    code = SPEND_HARD if used >= cfg.api.usd_hard else SPEND_WARN if used >= cfg.api.usd_warn else SPEND_OK
+    state = {SPEND_OK: "ok", SPEND_WARN: "WARN", SPEND_HARD: "HARD CAP REACHED"}[code]
+    lim = u.get("limit")
+    msg = (f"spend {state}: ${used:.2f} used; warn ${cfg.api.usd_warn:.2f}, hard cap ${cfg.api.usd_hard:.2f}"
+           + (f"; OpenRouter key limit ${lim:.2f}" if isinstance(lim, (int, float)) else "; no OpenRouter key limit set"))
+    return Outcome(code, msg, p1, extra={"usage": used, "warn": cfg.api.usd_warn, "hard": cfg.api.usd_hard,
+                                         "limit": lim})

@@ -7,7 +7,8 @@ CPI = max(power / power_cap, gpu_mem / gpu_mem_cap, token_rate / token_rate_cap,
 
 dev mode uses FakeMetricsProvider. cluster mode requires NVML (pynvml) and psutil;
 if either is unavailable the governor refuses to start (fail closed). local mode uses
-LocalMetricsProvider (psutil only; no GPU power, so energy is not measured).
+LocalMetricsProvider (psutil only; no GPU power, so energy is not measured); so does api
+mode (OpenRouter: inference runs remotely; spend is capped by the OpenRouter backend).
 Throttling concurrency is the control lever; GPU power limits are never set.
 """
 
@@ -137,7 +138,7 @@ def make_provider(mode: str, disk_path: str | Path = ".") -> MetricsProvider:
         return FakeMetricsProvider()
     if mode == "cluster":
         return NvmlMetricsProvider(disk_path)
-    if mode == "local":
+    if mode in ("local", "api"):  # api track: CPU job, no GPU in this process
         return LocalMetricsProvider(disk_path)
     raise GovernorError(f"unknown mode {mode!r}")
 

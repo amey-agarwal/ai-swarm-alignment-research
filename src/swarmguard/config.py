@@ -36,8 +36,10 @@ class _Strict(BaseModel):
 class RunCfg(_Strict):
     # local = exploratory runs against Ollama on 127.0.0.1 without OS-level isolation;
     # always waived network probes, so never analysable (safety score < 1.0).
-    mode: Literal["dev", "cluster", "local"] = "dev"
-    backend: Literal["stub", "vllm", "ollama"] = "stub"
+    # api = the separate OpenRouter track (CPU Slurm job, egress only to openrouter.ai, spend-capped);
+    # scored with its own checks and never pooled with cluster runs.
+    mode: Literal["dev", "cluster", "local", "api"] = "dev"
+    backend: Literal["stub", "vllm", "ollama", "openrouter"] = "stub"
     seed: int = Field(0, ge=0, le=2**31 - 1)
 
 
@@ -97,6 +99,26 @@ class GovernorCfg(_Strict):
 class BudgetCfg(_Strict):
     energy_wh: float = Field(50.0, gt=0.0, le=500.0)
     tokens: int = Field(2_000_000, gt=0, le=10_000_000)
+
+
+OPENROUTER_HOST = "openrouter.ai"
+MAX_API_USD = 50.0  # credits allotted to the API track; usd_hard can never exceed this
+
+
+class ApiCfg(_Strict):
+    """OpenRouter track. The key is read from `key_file` (never from the environment)."""
+
+    host: Literal["openrouter.ai"] = OPENROUTER_HOST
+    key_file: str = "~/.config/swarmguard/openrouter.key"
+    usd_warn: float = Field(25.0, gt=0.0, le=MAX_API_USD)   # email once total key usage reaches this
+    usd_hard: float = Field(50.0, gt=0.0, le=MAX_API_USD)   # no new requests at or above this
+    timeout_s: float = Field(120.0, ge=5.0, le=600.0)
+
+    @model_validator(mode="after")
+    def _warn_below_hard(self) -> "ApiCfg":
+        if self.usd_warn >= self.usd_hard:
+            raise ValueError("api.usd_warn must be < api.usd_hard")
+        return self
 
 
 class MessagesCfg(_Strict):
@@ -221,6 +243,7 @@ class Config(_Strict):
     rundir: RundirCfg = RundirCfg()
     cache: CacheCfg = CacheCfg()
     disk: DiskCfg = DiskCfg()
+    api: ApiCfg = ApiCfg()
     # experiment section
     model: ModelCfg = ModelCfg()
     episode: EpisodeCfg = EpisodeCfg()
@@ -238,6 +261,11 @@ class Config(_Strict):
             raise ValueError("vllm backend is refused in dev mode")
         if (self.run.backend == "ollama") != (self.run.mode == "local"):
             raise ValueError("the ollama backend requires local mode, and local mode requires the ollama backend")
+        if (self.run.backend == "openrouter") != (self.run.mode == "api"):
+            raise ValueError("the openrouter backend requires api mode, and api mode requires the openrouter backend")
+        if self.run.mode == "api" and self.sandbox.network_isolation != "unavailable":
+            raise ValueError("api mode needs outbound HTTPS to openrouter.ai: set sandbox.network_isolation="
+                             "unavailable with a written justification (see configs/api_openrouter.yaml)")
         if self.run.mode == "local" and self.sandbox.network_isolation != "unavailable":
             raise ValueError("local mode has no OS-level isolation: set sandbox.network_isolation=unavailable "
                              "with a written justification (see configs/local_ollama.yaml)")
@@ -282,10 +310,14 @@ def load_config(
 # ----------------------------------------------------------------------------- models registry
 
 
+API_PLACEHOLDER = "CHANGEME"
+_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*")
+
+
 class ModelEntry(_Strict):
-    hf_id: str
+    hf_id: str  # for OpenRouter entries this equals openrouter_id
     role: Literal["swarm", "judge"]
-    params_b: float = Field(gt=0)
+    params_b: float | None = Field(None, gt=0)  # required for open-weight models; unknown for API models
     license: str
     gated: bool
     optional: bool = False
@@ -293,6 +325,56 @@ class ModelEntry(_Strict):
     dtype: Literal["bfloat16"] = "bfloat16"
     # Ollama tag for local exploratory runs (quantized; not comparable with bf16 cluster runs).
     ollama_tag: str | None = None
+    # OpenRouter track: model slug (no ":" variants such as :online, which adds web search) and the
+    # providers it may be served by (pinned; fallbacks are always off).
+    openrouter_id: str | None = None
+    providers: list[str] = Field(default_factory=list)
+
+    @field_validator("openrouter_id")
+    @classmethod
+    def _openrouter_id_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        low = v.lower()
+        if any(b in low for b in BANNED_MODEL_SUBSTRINGS):
+            raise ValueError(f"openrouter model {v!r} is not allowed")
+        if ":" in v:
+            raise ValueError(f"openrouter model {v!r}: ':' variants are not allowed (e.g. ':online' adds web search)")
+        if low.startswith("openrouter/"):
+            raise ValueError(f"openrouter model {v!r}: OpenRouter's own routers pick models dynamically; pin a model")
+        if not _SLUG_RE.fullmatch(low):
+            raise ValueError(f"openrouter model {v!r} is malformed (expected <org>/<model>)")
+        return v
+
+    @field_validator("providers")
+    @classmethod
+    def _providers_ok(cls, v: list[str]) -> list[str]:
+        for p in v:
+            low = p.lower()
+            if any(b in low for b in BANNED_MODEL_SUBSTRINGS):
+                raise ValueError(f"provider {p!r} is not allowed")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*", low):
+                raise ValueError(f"provider slug {p!r} is malformed")
+        return v
+
+    @model_validator(mode="after")
+    def _entry_consistent(self) -> "ModelEntry":
+        if self.openrouter_id is None:
+            if self.params_b is None:
+                raise ValueError(f"{self.hf_id}: params_b is required for open-weight models")
+            if self.providers:
+                raise ValueError(f"{self.hf_id}: providers only apply to OpenRouter models")
+        else:
+            if self.hf_id != self.openrouter_id:
+                raise ValueError(f"{self.hf_id}: hf_id must equal openrouter_id for OpenRouter entries")
+            if not self.providers:
+                raise ValueError(f"{self.openrouter_id}: list at least one pinned provider")
+        return self
+
+    @property
+    def is_placeholder(self) -> bool:
+        return API_PLACEHOLDER.lower() in (self.openrouter_id or "").lower() or any(
+            API_PLACEHOLDER.lower() in p.lower() for p in self.providers)
 
     @field_validator("hf_id")
     @classmethod

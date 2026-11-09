@@ -107,7 +107,7 @@ FORBIDDEN_MODULES = frozenset(
 )
 SOCKET_MODULES = frozenset({"socket", "ssl", "socketserver"})
 NETWORK_MODULES = frozenset(
-    {"requests", "urllib", "urllib3", "httpx", "http", "aiohttp", "openai", "ftplib", "smtplib",
+    {"requests", "urllib", "urllib3", "httpx", "httpx2", "http", "aiohttp", "openai", "ftplib", "smtplib",
      "telnetlib", "xmlrpc", "websocket", "websockets", "paramiko"}
 )
 FORBIDDEN_OS_ATTRS = frozenset(
@@ -115,7 +115,8 @@ FORBIDDEN_OS_ATTRS = frozenset(
      "execve", "execl", "execle", "execlp", "execlpe", "execvp", "execvpe", "spawnl", "spawnle",
      "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe"}
 )
-TOOL_PARAM_NAMES = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls"})
+TOOL_PARAM_NAMES = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls",
+                              "plugins", "web_search_options"})
 
 SOCKET_EXEMPT = frozenset({"safety/probes.py"})
 NETWORK_EXEMPT = frozenset({"agents/llm_client.py"})
@@ -248,6 +249,18 @@ def check_mode_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
             problems.append("local mode requires sandbox.network_isolation=unavailable with a justification")
         return _r("mode_backend_env", not problems,
                   "; ".join(problems) or "local + ollama, NO OS isolation (exploratory; never analysable)")
+    if cfg.run.mode == "api":
+        problems = []
+        if cfg.run.backend != "openrouter":
+            problems.append("api mode requires the openrouter backend")
+        if cfg.sandbox.network_isolation != "unavailable":
+            problems.append("api mode requires sandbox.network_isolation=unavailable with a justification")
+        if not env.get("SLURM_JOB_ID"):
+            problems.append("SLURM_JOB_ID unset (api runs happen only inside a Slurm job)")
+        if env.get("APPTAINER_CONTAINER") or env.get("SINGULARITY_CONTAINER"):
+            problems.append("api runs do not use the container (it has no network); run in the CPU job")
+        return _r("mode_backend_env", not problems, "; ".join(problems) or
+                  f"api + openrouter in Slurm job {env.get('SLURM_JOB_ID')}; egress only to {cfg.api.host}")
     problems = []
     if not env.get("SLURM_JOB_ID"):
         problems.append("SLURM_JOB_ID unset (not inside a Slurm job)")
@@ -259,10 +272,10 @@ def check_mode_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
 def check_offline_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
     if cfg.run.mode == "dev":
         return CheckResult("offline_env", "skipped", "skipped (dev)")
-    if cfg.run.mode == "local":
-        # Ollama serves local weights; the Hugging Face offline vars do not apply.
+    if cfg.run.mode in ("local", "api"):
+        # Ollama serves local weights / OpenRouter is remote; the Hugging Face offline vars do not apply.
         ok = env.get("PYTHONDONTWRITEBYTECODE") == "1"
-        return _r("offline_env", ok, "PYTHONDONTWRITEBYTECODE=1 (HF offline vars n/a for ollama)" if ok
+        return _r("offline_env", ok, f"PYTHONDONTWRITEBYTECODE=1 (HF offline vars n/a for {cfg.run.backend})" if ok
                   else "PYTHONDONTWRITEBYTECODE not set to 1")
     need = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1"}
     bad = [k for k, v in need.items() if env.get(k) != v]
@@ -297,6 +310,13 @@ def check_models(cfg: Config) -> CheckResult:
                 problems.append(f"{m.hf_id}: revision not pinned (required in cluster mode)")
     if cfg.run.mode == "local" and sw is not None and not sw.ollama_tag:
         problems.append(f"{sw.hf_id}: no ollama_tag (required in local mode)")
+    if cfg.run.mode == "api" and sw is not None:
+        if not sw.openrouter_id:
+            problems.append(f"{cfg.model.swarm}: not an OpenRouter model (needs openrouter_id + providers)")
+        elif sw.is_placeholder:
+            problems.append(f"{cfg.model.swarm}: placeholder model/provider in configs/models.yaml (fill in CHANGEME)")
+    if cfg.run.mode != "api" and sw is not None and sw.openrouter_id:
+        problems.append(f"{cfg.model.swarm}: OpenRouter models run only in api mode")
     detail = "; ".join(problems) or f"swarm={sw.hf_id}, judge={jd.hf_id}"  # type: ignore[union-attr]
     if not problems and cfg.run.mode == "local":
         detail += f", ollama_tag={sw.ollama_tag} (quantized)"  # type: ignore[union-attr]
@@ -339,6 +359,32 @@ def secret_like_env_names(env: Mapping[str, str]) -> list[str]:
 def check_secrets(env: Mapping[str, str]) -> CheckResult:
     bad = secret_like_env_names(env)
     return _r("no_secrets", not bad, f"secret-like env var names: {bad}" if bad else "none")
+
+
+def check_api_key_file(cfg: Config) -> CheckResult:
+    """api mode: the key file exists, is private, owned by the user and outside the repo (never printed)."""
+    from swarmguard.agents.llm_client import LLMError, read_api_key
+
+    try:
+        read_api_key(cfg.api.key_file)
+    except LLMError as exc:
+        return _r("api_key_file", False, str(exc))
+    return _r("api_key_file", True, f"{cfg.api.key_file}: private, outside the repo")
+
+
+def check_api_spend(cfg: Config, usage_fn: Any = None) -> CheckResult:
+    """api mode: authoritative key usage (OpenRouter) is below the hard cap before any model call."""
+    from swarmguard.agents.llm_client import LLMError, key_usage_from_file
+
+    try:
+        u = (usage_fn or key_usage_from_file)(cfg.api.key_file)
+    except LLMError as exc:
+        return _r("api_spend", False, f"cannot read key usage (fail closed): {exc}")
+    used = float(u.get("usage") or 0.0)
+    ok = used < cfg.api.usd_hard
+    lim = u.get("limit")
+    return _r("api_spend", ok, f"${used:.2f} used of ${cfg.api.usd_hard:.2f} hard cap (warn at ${cfg.api.usd_warn:.2f})"
+              + (f"; key limit ${lim:.2f}" if isinstance(lim, (int, float)) else "; no key limit set on OpenRouter"))
 
 
 def check_static(root: Path) -> CheckResult:
@@ -401,5 +447,9 @@ def run_pass1(
     else:
         for name in ("mode_backend_env", "offline_env", "llm_host", "swarm_caps", "models", "routing", "canary_absent"):
             res.checks.append(_r(name, False, "config invalid"))
+    if cfg is not None and cfg.run.mode == "api":
+        res.checks += [check_api_key_file(cfg)]
+        res.checks += [check_api_spend(cfg) if res.checks[-1].status == "pass"
+                       else _r("api_spend", False, "not checked: key file invalid")]
     res.checks += [check_secrets(env), check_static(root), check_manifest(root)]
     return res

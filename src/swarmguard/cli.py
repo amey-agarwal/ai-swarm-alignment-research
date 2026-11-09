@@ -53,15 +53,15 @@ def _finish(outcome, show_passes: bool = False) -> None:
 
 @app.command()
 def doctor(
-    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local (local needs --config configs/local_ollama.yaml)"),
+    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local | api (local/api need their --config)"),
     config: Optional[Path] = typer.Option(None, "--config", help="extra YAML merged over configs/base.yaml"),
 ) -> None:
     """Run safety pass 1 (config + static) and pass 2 (live probes); print a table."""
     from swarmguard.safety.preflight import resolve_config, run_pass1
     from swarmguard.safety.probes import run_pass2
 
-    if mode not in ("dev", "cluster", "local"):
-        raise typer.BadParameter("mode must be dev, cluster or local")
+    if mode not in ("dev", "cluster", "local", "api"):
+        raise typer.BadParameter("mode must be dev, cluster, local or api")
     p1 = run_pass1(config, mode)
     _print_pass(p1)
     cfg, detail = resolve_config(config, mode)
@@ -139,8 +139,8 @@ def run(
                                    help="none | dropout:<p> | leader-rotate | handoff:structured | handoff:freetext"),
     rename: str = typer.Option("off", "--rename", help="off (rename is P2)"),
     verifier: str = typer.Option("passive", "--verifier", help="passive | active (mitigation arms)"),
-    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local (exploratory, never analysable)"),
-    backend: str = typer.Option("stub", "--backend", help="stub | vllm (cluster) | ollama (local)"),
+    mode: str = typer.Option("dev", "--mode", help="dev | cluster | local (never analysable) | api (OpenRouter track)"),
+    backend: str = typer.Option("stub", "--backend", help="stub | vllm (cluster) | ollama (local) | openrouter (api)"),
     seed: int = typer.Option(0, "--seed"),
     out: Path = typer.Option(Path("runs"), "--out", help="root directory for run directories"),
     config: Optional[Path] = typer.Option(None, "--config", help="extra YAML merged over configs/base.yaml"),
@@ -214,13 +214,15 @@ def analyze(
                                              help="metrics.json from `swarm judge --validate` (enables judge metrics)"),
     by: str = typer.Option("claim,policy,mitigation", "--by", help="comma-separated grouping factors"),
     out: Optional[Path] = typer.Option(None, "--out", help="write summary.json, episodes.csv and a figure here"),
+    track: str = typer.Option("main", "--track", help="main (all non-API runs) | api (OpenRouter runs only)"),
 ) -> None:
     """Offline analysis. Only runs with safety score 1.0 are included; judge metrics need a passing kappa."""
     import json as _json
 
     from swarmguard.runner import analyze as run_analyze
 
-    oc = run_analyze(runs, agreement_file=agreement, by=[b.strip() for b in by.split(",") if b.strip()], out_dir=out)
+    oc = run_analyze(runs, agreement_file=agreement, by=[b.strip() for b in by.split(",") if b.strip()], out_dir=out,
+                     track=track)
     if oc.exit_code == 0:
         for name in ("success", "propagation_any", "psr_conditional"):
             typer.echo(f"\n{name}:")
@@ -229,6 +231,36 @@ def analyze(
         for ex in oc.extra.get("excluded", []):
             typer.echo(f"excluded {ex['run_id']}: {ex['reason']}")
     _finish(oc)
+
+
+@app.command()
+def report(
+    runs: Path = typer.Argument(..., help="root directory holding run directories"),
+    out: Path = typer.Option(..., "--out", help="output directory OUTSIDE the repo (figures, data, tables, zip)"),
+    agreement: Optional[Path] = typer.Option(None, "--agreement",
+                                             help="metrics.json from `swarm judge --validate` (enables judge metrics)"),
+    track: str = typer.Option("cluster", "--track", help="cluster (open-weight PACE runs) | api (OpenRouter runs)"),
+) -> None:
+    """Report figures (PDF + PNG), CSVs, LaTeX tables, captions and report_figures.zip from analysable
+    runs of ONE track (never pooled). Stub, dev and local runs are refused."""
+    from swarmguard.runner import build_report_cmd
+
+    if track not in ("cluster", "api"):
+        raise typer.BadParameter("track must be cluster or api")
+    _finish(build_report_cmd(runs, out, agreement_file=agreement, track=track))
+
+
+@app.command()
+def spend(
+    config: Optional[Path] = typer.Option(Path("configs/api_openrouter.yaml"), "--config",
+                                          help="config with the api section (key file, warn/hard caps)"),
+) -> None:
+    """OpenRouter key usage vs the api budget. Exit 0 ok, 10 at/above warn, 11 at/above hard cap, 1 unknown."""
+    from swarmguard.runner import spend_cmd
+
+    oc = spend_cmd(config)
+    typer.echo(oc.message)
+    raise typer.Exit(oc.exit_code)
 
 
 @app.command()

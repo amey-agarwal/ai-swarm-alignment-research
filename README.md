@@ -147,6 +147,83 @@ when free disk falls below `disk.min_free_frac` (10 %).
    `swarm judge --validate data/labels/<file>.jsonl --mode cluster --backend vllm --out /runs`
    on the ~200 human-labelled messages.
 7. **Analyse:** `swarm analyze $SWARM_RUNS --agreement <validation_run>/metrics.json --out ../swarmguard-analysis/`.
+8. **Report figures:** see below.
+
+## API track (OpenRouter)
+
+A separate track runs frontier models through [OpenRouter](https://openrouter.ai) with the same
+swarm, tasks, impostor and measurements. It is **never pooled** with the open-weight cluster runs.
+
+Setup (once):
+1. Create a fresh OpenRouter key and give it a **$50 credit limit** in the dashboard.
+2. Save it to a private file outside the repo, never in an environment variable:
+   `mkdir -p ~/.config/swarmguard && (umask 077; cat > ~/.config/swarmguard/openrouter.key)`, then paste
+   the key and press Ctrl-D.
+3. Fill in the two `CHANGEME` entries in [configs/models.yaml](configs/models.yaml): the exact
+   `openrouter_id` (no `:` variants) and the provider(s) to pin. Then run `swarm manifest`.
+4. `pip install -e ".[api,analysis]"` into a venv on PACE.
+
+Run on PACE (CPU jobs, no GPU or container):
+```bash
+export SWARM_REPO=$PWD SWARM_VENV=/path/venv SWARM_RUNS_API=/path/runs_api SWARM_NOTIFY_EMAIL=<you>@gatech.edu
+export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno
+jid=$(sbatch --parsable slurm/api_check.sbatch)                          # outbound, key file, doctor, spend
+pilot=$(sbatch --parsable --dependency=afterok:$jid --array=0 --export=ALL,TASKS_PER_JOB=1 \
+        slurm/api_sweep.sbatch configs/grid_openrouter.yaml)              # 1 episode: check the cost
+# after checking `swarm spend`:
+runs=$(sbatch --parsable --array=0-1%2 slurm/api_sweep.sbatch configs/grid_openrouter.yaml)
+SWARM_TRACK=api SWARM_RUNS=$SWARM_RUNS_API SWARM_REPORT=/path/report_api \
+  sbatch --dependency=afterany:$runs slurm/analyze.sbatch
+```
+
+Safeguards:
+- The client accepts only `https://openrouter.ai` on every request.
+- Providers are pinned, with fallbacks off and `require_parameters` on.
+- Qwen and DeepSeek, `:online` (web search), the `openrouter/*` routers, plugins and tools are refused.
+- Spend: OpenRouter's authoritative key usage is checked before every run. The sweep emails once at
+  **$25** and stops starting episodes at **$50**, and the backend refuses requests at the cap.
+- Postflight confirms that the key appears in no run file.
+
+Locally: `swarm analyze <runs> --track api` and `swarm report <runs> --out <dir> --track api`.
+
+## Report figures
+
+`swarm report` builds the figures, tables and captions for a write-up from analysable cluster runs:
+
+```bash
+swarm report $SWARM_RUNS --out /path/outside/repo/report --agreement <validation_run>/metrics.json
+# on PACE, chained after the runs (CPU only, 15 min):
+SWARM_REPORT=/path/report SWARM_VENV=/path/venv sbatch --dependency=afterany:<jobid> slurm/analyze.sbatch
+```
+
+It writes `figures/` (PDF + 300-dpi PNG), `data/` (a CSV of exactly the plotted numbers for every
+figure), `tables/` (LaTeX), `captions.md` (marking each figure pre-registered or exploratory),
+`figures_manifest.json` (git SHA, run IDs, judge model and κ, file hashes) and
+`report_figures.zip` for download.
+
+| Figure | Shows | Hypothesis |
+|---|---|---|
+| F1 | Setup: star swarm, impostor, round protocol | — |
+| F2 | Run flow through the safety gates, with exclusion reasons | — |
+| F3 | Permission-seeking rate by claim × policy (all and comprehension-conditional) | H1, H2 |
+| F4 | Spread of capability references over rounds | H1 |
+| F5 | Mitigation effects versus baseline (forest plot) | H3, H4 |
+| F6 | Scaling with model size, one panel per family | H5 |
+| F7 | Task success versus permission-seeking | — |
+| F8a–c | Judge κ vs human labels; comprehension; tracer vs judge | — |
+| F9 | Persistence after each dissuasion step | H2 |
+| F10a–b | Time to first request; who starts it | H1 |
+| F11 | One episode, agent × round (rule-selected, not hand-picked) | — |
+| F12 | LLM leader versus scripted-leader control | — |
+| F13 | Escalation markers | — |
+| F14 | Tokens and energy per episode (compute budgeting) | — |
+
+Tables: T1 conditions and n per cell, T2 logistic-regression odds ratios, T3 example messages
+(rule-selected, truncated, escaped). Every rate carries a 95% Wilson interval; effects use
+Newcombe (rates) or Welch (means) intervals. Without a passing judge κ the figures fall back to
+the tracer outcome and say so; judge-only figures are listed in `data/skipped_figures.csv`.
+**Stub, dev and local runs are refused**, so pipeline checks can never appear as results, and
+the output directory must be outside the repository.
 
 Every run directory stores the resolved config, git SHA, package versions, model ID and revision.
 `swarm replay` reproduces any run byte for byte from its cache, without a GPU.

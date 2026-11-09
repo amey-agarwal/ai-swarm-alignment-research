@@ -26,11 +26,12 @@ from typing import Any, Callable, Protocol, Sequence
 
 from swarmguard.agents.cache import CachedResponse, ResponseCache
 from swarmguard.agents.parser import count_tokens
-from swarmguard.config import LOCALHOST, Config
+from swarmguard.config import LOCALHOST, OPENROUTER_HOST, REPO_ROOT, Config
 
 VLLM_KEY_ENV = "SWARM_VLLM_API_KEY"
-# Request keys that must never be sent (tool / function calling).
-FORBIDDEN_REQUEST_KEYS = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls"})
+# Request keys that must never be sent (tool / function calling, OpenRouter plugins such as web search).
+FORBIDDEN_REQUEST_KEYS = frozenset({"tools", "tool_choice", "functions", "function_call", "parallel_tool_calls",
+                                    "plugins", "web_search_options"})
 ALLOWED_REQUEST_KEYS = frozenset(
     {"model", "messages", "temperature", "top_p", "max_tokens", "seed", "response_format", "n"}
 )
@@ -233,13 +234,197 @@ class OllamaBackend(VLLMBackend):
         self._client = client
 
 
+# ----------------------------------------------------------------------------- OpenRouter (api track)
+
+OPENROUTER_BASE = f"https://{OPENROUTER_HOST}/api/v1"
+MAX_KEY_FILE_BYTES = 4096
+
+
+class SpendCapError(LLMError):
+    """The API spend cap is reached: no further requests are sent."""
+
+
+def check_api_url(url: str) -> str:
+    """Egress allowlist: only https://openrouter.ai (default port, no credentials in the URL)."""
+    from urllib.parse import urlsplit
+
+    u = urlsplit(str(url))
+    if u.scheme != "https" or u.hostname != OPENROUTER_HOST or u.port not in (None, 443) or u.username or u.password:
+        raise LLMError(f"egress refused: only https://{OPENROUTER_HOST} is allowed")
+    return str(url)
+
+
+def read_api_key(path: str | os.PathLike) -> str:
+    """Read the OpenRouter key from a private file. The key never comes from the environment and
+    is never logged; errors never include it."""
+    from pathlib import Path
+
+    p = Path(os.path.expanduser(str(path)))
+    try:
+        st = p.lstat()
+    except OSError as exc:
+        raise LLMError(f"API key file {p} not readable: {type(exc).__name__}") from exc
+    import stat as _stat
+
+    if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode):
+        raise LLMError(f"API key file {p} must be a regular file (not a symlink)")
+    if st.st_mode & 0o077:
+        raise LLMError(f"API key file {p} must be private: chmod 600 {p}")
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        raise LLMError(f"API key file {p} must be owned by you")
+    resolved = p.resolve()
+    if resolved == REPO_ROOT or REPO_ROOT in resolved.parents:
+        raise LLMError("API key file must be outside the repository")
+    if st.st_size == 0 or st.st_size > MAX_KEY_FILE_BYTES:
+        raise LLMError(f"API key file {p} is empty or too large")
+    key = p.read_text(encoding="utf-8").strip()
+    if not key or any(c.isspace() for c in key):
+        raise LLMError(f"API key file {p} must contain exactly one key")
+    return key
+
+
+def _api_http(timeout_s: float, hosts: set[str] | None = None, http: Any = None):
+    """HTTP client whose every request is checked against the egress allowlist before sending.
+    Uses httpx2 (what current openai releases depend on) or, if absent, httpx."""
+    try:
+        import httpx2 as httpx
+    except ImportError:
+        import httpx
+
+    def guard(request):
+        check_api_url(str(request.url))
+        if hosts is not None:
+            hosts.add(request.url.host)
+
+    if http is not None:
+        http.event_hooks.setdefault("request", []).insert(0, guard)
+        return http
+    return httpx.Client(timeout=timeout_s, follow_redirects=False, trust_env=False,
+                        event_hooks={"request": [guard]})
+
+
+def fetch_key_usage(key: str, *, timeout_s: float = 30.0, http: Any = None) -> dict[str, float | None]:
+    """Authoritative spend for this key from OpenRouter (GET /api/v1/key): credits = USD."""
+    client = _api_http(timeout_s, http=http)
+    url = check_api_url(f"{OPENROUTER_BASE}/key")
+    try:
+        resp = client.get(url, headers={"Authorization": f"Bearer {key}"})
+    except Exception as exc:  # noqa: BLE001 - never echo request details (they carry the key)
+        raise LLMError(f"OpenRouter key-usage request failed: {type(exc).__name__}") from None
+    if resp.status_code != 200:
+        raise LLMError(f"OpenRouter key-usage request failed: HTTP {resp.status_code}")
+    data = (resp.json() or {}).get("data") or {}
+
+    def num(k):
+        v = data.get(k)
+        return float(v) if isinstance(v, (int, float)) else None
+
+    usage = num("usage")
+    if usage is None:
+        raise LLMError("OpenRouter key-usage response has no numeric data.usage")
+    return {"usage": usage, "limit": num("limit"), "limit_remaining": num("limit_remaining")}
+
+
+def key_usage_from_file(key_file: str, *, timeout_s: float = 30.0, http: Any = None) -> dict[str, float | None]:
+    return fetch_key_usage(read_api_key(key_file), timeout_s=timeout_s, http=http)
+
+
+class OpenRouterBackend:
+    """OpenAI-compatible client for https://openrouter.ai/api/v1 (api mode only).
+
+    - Egress: an httpx request hook refuses any URL other than https://openrouter.ai; no redirects;
+      proxies from the environment are ignored (trust_env=False).
+    - Providers are pinned: provider.order = provider.only = the model's list, allow_fallbacks=False,
+      require_parameters=True (seed + JSON schema must be honoured), data_collection="deny".
+    - Spend: usage.cost of every response is added up; before each request the key's authoritative
+      usage at start plus this process's spend must be below `usd_hard`, else SpendCapError.
+    - Never tools or plugins (build_request + FORBIDDEN_REQUEST_KEYS).
+    """
+
+    def __init__(self, model_id: str, providers: Sequence[str], *, key_file: str, usd_hard: float,
+                 timeout_s: float = 120.0, client: Any = None, http: Any = None, baseline_usd: float | None = None):
+        if not providers:
+            raise LLMError("openrouter backend needs pinned providers")
+        self.model_id = model_id
+        self.providers = list(providers)
+        self.model_revision = "openrouter:" + ",".join(self.providers)
+        self.usd_hard = float(usd_hard)
+        self.hosts: set[str] = set()
+        self.spend_usd = 0.0
+        self.requests = 0
+        key = read_api_key(key_file)
+        self._http = _api_http(timeout_s, self.hosts, http)
+        self.baseline_usd = (baseline_usd if baseline_usd is not None
+                             else float(fetch_key_usage(key, timeout_s=timeout_s, http=self._http)["usage"] or 0.0))
+        if self.baseline_usd >= self.usd_hard:
+            raise SpendCapError(f"API spend cap reached before start: ${self.baseline_usd:.2f} >= ${self.usd_hard:.2f}")
+        if client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:
+                raise LLMError("openai client not installed (pip install -e '.[api]')") from exc
+            client = OpenAI(base_url=OPENROUTER_BASE, api_key=key, http_client=self._http, timeout=timeout_s,
+                            max_retries=0)
+        self._key = key  # in memory only: needed for GET /key; never logged, cached or returned
+        self._timeout_s = timeout_s
+        self._client = client
+
+    def key_usage_now(self) -> float | None:
+        """Authoritative total usage of the key right now (None if it cannot be read)."""
+        try:
+            return float(fetch_key_usage(self._key, timeout_s=self._timeout_s, http=self._http)["usage"] or 0.0)
+        except LLMError:
+            return None
+
+    def __repr__(self) -> str:  # never show the key
+        return f"OpenRouterBackend(model_id={self.model_id!r}, providers={self.providers!r})"
+
+    def provider_block(self) -> dict[str, Any]:
+        return {"order": list(self.providers), "only": list(self.providers), "allow_fallbacks": False,
+                "require_parameters": True, "data_collection": "deny"}
+
+    def complete(self, req: ChatRequest) -> Completion:
+        if self.baseline_usd + self.spend_usd >= self.usd_hard:
+            raise SpendCapError(f"API spend cap reached: ${self.baseline_usd + self.spend_usd:.2f} >= "
+                                f"${self.usd_hard:.2f}")
+        kwargs = build_request(self.model_id, req)
+        resp = self._client.chat.completions.create(**kwargs, extra_body={"provider": self.provider_block()})
+        self.requests += 1
+        usage = getattr(resp, "usage", None)
+        cost = getattr(usage, "cost", None)
+        if cost is None and usage is not None and getattr(usage, "model_extra", None):
+            cost = usage.model_extra.get("cost")
+        if isinstance(cost, (int, float)) and cost > 0:
+            self.spend_usd += float(cost)
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        return Completion(
+            text,
+            int(getattr(usage, "prompt_tokens", 0) or 0),
+            int(getattr(usage, "completion_tokens", 0) or count_tokens(text)),
+            str(choice.finish_reason or "unknown"),
+        )
+
+    def api_summary(self) -> dict[str, Any]:
+        return {"hosts": sorted(self.hosts), "spend_usd": self.spend_usd, "baseline_usd": self.baseline_usd,
+                "usd_hard": self.usd_hard, "providers": list(self.providers), "requests": self.requests}
+
+
 OLLAMA_DEFAULT_PORT = 11434
 
 
 def make_backend(cfg: Config, *, model_id: str | None = None, model_revision: str | None = None,
-                 port: int | None = None, stub_responder: Responder | None = None) -> Backend:
+                 port: int | None = None, stub_responder: Responder | None = None,
+                 providers: Sequence[str] | None = None) -> Backend:
     if cfg.run.backend == "stub":
         return StubBackend(responder=stub_responder or default_responder)
+    if cfg.run.backend == "openrouter":
+        if cfg.run.mode != "api":
+            raise LLMError("openrouter backend is refused outside api mode")
+        if not model_id or not providers:
+            raise LLMError("openrouter backend needs a model id and pinned providers")
+        return OpenRouterBackend(model_id, providers, key_file=cfg.api.key_file, usd_hard=cfg.api.usd_hard,
+                                 timeout_s=cfg.api.timeout_s)
     if cfg.run.backend == "ollama":
         if cfg.run.mode != "local":
             raise LLMError("ollama backend is refused outside local mode")

@@ -95,6 +95,8 @@ class EpisodeMetrics:
     markers: dict[str, int] | None = None
     judge_withheld_reason: str | None = None
     mitigation_round: int | None = None
+    mode: str | None = None          # safety-report mode: cluster | api | dev | local
+    spend_usd: float | None = None   # api track: OpenRouter cost of this run
 
     def row(self) -> dict[str, Any]:
         d = asdict(self)
@@ -160,6 +162,7 @@ def episode_metrics(rd: RunDir, *, agreement: AgreementResult | None = None,
         propagation=trace.propagation, canary_propagation=trace.canary_propagation,
         first_reference_round=first_ref, reference_origin=trace.origin, reference_origin_role=_role(trace.origin),
         mitigation_round=mit["round"] if mit else None,
+        mode=report.mode, spend_usd=report.resources.spend_usd,
     )
 
     reason = judge_gate(agreement, judge_model)
@@ -226,14 +229,28 @@ def iter_run_dirs(root: str | Path) -> Iterable[RunDir]:
             yield RunDir(root, p.name)
 
 
+def run_track(rd: RunDir) -> str | None:
+    """'api' for OpenRouter-track runs, 'main' for everything else, None if the report is unreadable."""
+    try:
+        mode = json.loads(rd.file("safety_report.json").read_text(encoding="utf-8")).get("mode")
+    except (OSError, ValueError):
+        return None
+    return "api" if mode == "api" else "main"
+
+
 def collect(root: str | Path, *, agreement: AgreementResult | None = None, judge_model: str | None = None,
-            strict: bool = False) -> AnalysisSet:
+            strict: bool = False, track: str | None = None) -> AnalysisSet:
     """Analyse every run under `root`. Non-analysable runs are excluded with a reason
-    (or, with strict=True, raise)."""
+    (or, with strict=True, raise). With `track` ('main' or 'api'), runs of the other track are
+    skipped entirely: the api (OpenRouter) track is never pooled with open-weight runs."""
     out = AnalysisSet()
     for rd in iter_run_dirs(root):
         if not rd.file("safety_report.json").exists() and not rd.file("log.jsonl").exists():
             continue
+        if track is not None:
+            t = run_track(rd)
+            if t is not None and t != track:
+                continue
         try:
             out.included.append(episode_metrics(rd, agreement=agreement, judge_model=judge_model))
         except (ReportError, KappaError, StopIteration, KeyError, OSError) as exc:

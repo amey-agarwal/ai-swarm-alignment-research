@@ -40,7 +40,7 @@ Instructions for Claude Code. Read this whole file before planning. It defines w
 
 ### Rules for the code you write
 - Never add tool-calling, function-calling, code execution, `eval`, `exec`, `compile`, `subprocess`, `os.system`, `pickle.loads` on agent data, or shell invocation anywhere agent text could reach.
-- Never add network calls except the single localhost LLM client in `agents/llm_client.py`, which must only accept host `127.0.0.1`.
+- Never add network calls except the single LLM client in `agents/llm_client.py`, which must only accept host `127.0.0.1` (vLLM, Ollama) or, for the `api` track only, exactly `https://openrouter.ai` (see §18). No other host, ever.
 - Never add a "skip safety checks" flag, environment variable, or code path. Checks fail closed.
 - Never add a grant arm, a file-write capability for agents, or any real resource behind the canary path.
 - Never add agent spawning in the core code. (A spawn-quota arm may be added later only on explicit user request.)
@@ -180,6 +180,8 @@ Do not name any package directory `logging` (it shadows the standard library). A
 ### 4.2 Run modes
 - `dev`: stub backend only. Container/Slurm probes are reported as `skipped (dev)`. `vllm` backend is refused in `dev` mode.
 - `cluster`: `vllm` backend allowed. Every probe must run and pass. No probe may be skipped.
+- `local` (amendment, §18): `ollama` backend on `127.0.0.1` for exploratory laptop runs. Network/write probes are waived (not attempted); runs always score < 1.0 and are never analysed.
+- `api` (amendment, §18): `openrouter` backend in a CPU Slurm job outside the container. Network/write probes are waived; the run is scored with its own api checks and analysed only as a separate track.
 
 ### 4.3 Two-pass safety check before every inference command
 Every command that triggers model inference (`run`, `sweep` tasks, `judge`) runs **pass 1 and pass 2** before any model call. Both must pass, or the command aborts with a non-zero exit code.
@@ -611,3 +613,50 @@ Open issues: <anything the user must decide>
 - A stub end-to-end run, replay, judge, and analysis work from a clean clone.
 - Slurm scripts and container recipe are ready for the user to submit.
 - `AGENT_EDITS.md` has one entry per step.
+
+---
+
+## 18. Amendments (user-approved changes after the P0 build)
+
+Each amendment was approved explicitly by the user ("approved: edit <path>" for every protected
+file touched). Details and test results are in `AGENT_EDITS.md`.
+
+### 18.1 Local exploratory mode (2026-11-08)
+- `--mode local --backend ollama --config configs/local_ollama.yaml`: Ollama on `127.0.0.1:11434`.
+  Ollama `-cloud` tags, Qwen and DeepSeek are refused. Network and write probes are never attempted
+  and are recorded as waived, so local runs always score < 1.0 and are excluded from analysis.
+  Ollama models are quantized; local results are not comparable with bf16 cluster runs.
+
+### 18.2 Report figures (2026-11-08)
+- `swarm report <runs> --out <dir outside repo> [--agreement ...] [--track cluster|api]` writes
+  F1–F14, T1–T3, CSV sidecars, captions and `report_figures.zip`. Stub, dev and local runs are
+  refused. `slurm/analyze.sbatch` runs it as a CPU job (`SWARM_TRACK` selects the track).
+
+### 18.3 API track: OpenRouter (2026-11-08)
+This relaxes the localhost-only network rule for one clearly separated track. Rules:
+- **Mode/backend:** `--mode api --backend openrouter --config configs/api_openrouter.yaml`, each
+  requiring the other. Runs happen only inside a Slurm job (`SLURM_JOB_ID`), outside the container
+  (which has no network): `slurm/api_check.sbatch`, `slurm/api_sweep.sbatch`.
+- **Egress:** `agents/llm_client.py` accepts exactly `https://openrouter.ai` on every request
+  (httpx/httpx2 request hook, no redirects, environment proxies ignored). Pass 2 adds the
+  `egress_allowlist` probe; the static scan also treats `httpx2` as a network module.
+- **Key:** read only from `api.key_file` (private `chmod 600`, owned by the user, outside the repo,
+  not a symlink). Never from an environment variable (the `*KEY*` env check still applies), never in
+  a prompt, log, cache or error message. Postflight scans every run file for the key.
+- **Models/providers:** `configs/models.yaml` entries with `openrouter_id` and pinned `providers`.
+  Requests send `provider = {order, only, allow_fallbacks: false, require_parameters: true,
+  data_collection: "deny"}`. Refused: Qwen/DeepSeek models or providers, `:` variants (e.g.
+  `:online` = web search), `openrouter/*` routers, `plugins`/`web_search_options` and every tool key.
+  Placeholder (`CHANGEME`) entries fail pass 1. OpenRouter models cannot run in any other mode.
+- **Spend:** `api.usd_warn` (default $25) and `api.usd_hard` (default and maximum $50, the credits
+  allotted). Pass 1 checks OpenRouter's authoritative key usage < hard cap; the backend refuses any
+  request once start usage + this run's `usage.cost` reaches it; `swarm spend` exits 10 at warn and
+  11 at hard; `api_sweep.sbatch` emails once at each threshold via a Slurm mail-only job (no email
+  code in the repo) and stops starting episodes at the hard cap. Also set a $50 credit limit on the
+  key in the OpenRouter dashboard as a server-side backstop.
+- **Scoring:** for `api` runs the two OS-isolation checks are replaced by `api.egress_allowlist_only`,
+  `api.spend_within_cap`, `api.key_never_logged`, `api.isolation_acknowledged`; all other checks are
+  unchanged and the safety score must still be 1.0. Containment counters are still recorded.
+- **Analysis:** never pooled. `swarm analyze --track api` and `swarm report --track api` use only api
+  runs; the default tracks exclude them. Keep API runs in their own directory (`SWARM_RUNS_API`).
+- **Judge:** API runs are judged like any other run (Gemma-3-27B on PACE via vLLM, cluster mode).

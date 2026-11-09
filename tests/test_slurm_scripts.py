@@ -86,3 +86,38 @@ def test_container_recipe():
         assert env in t
     assert "network tool present" in t  # build fails if curl/wget/ssh/... are present
     assert not re.search(r"qwen|deepseek", t, re.IGNORECASE)
+
+
+def test_analyze_sbatch():
+    t = _text("analyze.sbatch")
+    if shutil.which("bash"):
+        subprocess.run(["bash", "-n", str(SLURM / "analyze.sbatch")], check=True, timeout=10)
+    assert "#SBATCH --time=00:15:00" in t and "#SBATCH --mem=4G" in t
+    assert "--gres" not in t and "apptainer" not in t and "vllm" not in t  # CPU only, no model
+    assert ': "${SLURM_JOB_ID:?' in t  # never on a login node
+    assert "env -i" in t and "swarm\" report" in t  # pass 1 sees a minimal environment
+    assert "SBATCH_ACCOUNT" in t and not re.search(r"^#SBATCH --(account|qos)=", t, re.MULTILINE)
+
+
+@pytest.mark.parametrize("name", ["api_check.sbatch", "api_sweep.sbatch"])
+def test_api_sbatch(name):
+    t = _text(name)
+    if shutil.which("bash"):
+        subprocess.run(["bash", "-n", str(SLURM / name)], check=True, timeout=10)
+    assert "--gres" not in t and "apptainer" not in t  # CPU only, outside the container
+    assert ': "${SLURM_JOB_ID:?' in t and "env -i" in t
+    assert "OPENROUTER_API_KEY" not in t and "export SWARM_" not in t.split("set -euo")[1]  # key never in env
+    assert "SBATCH_ACCOUNT" in t and not re.search(r"^#SBATCH --(account|qos)=", t, re.MULTILINE)
+    assert "swarm\" \"$@\"" in t and "spend --config" in t
+
+
+def test_api_sweep_spend_alerts():
+    t = _text("api_sweep.sbatch")
+    assert "--mail-type=BEGIN" in t and "SWARM_NOTIFY_EMAIL" in t and 'mkdir "${SWARM_RUNS_API}/.${1}"' in t
+    assert "rc} -eq 10" in t and "break" in t and "--mode api --backend openrouter" in t
+    assert "--signal=B:USR1@120" in t and "--time=02:00:00" in t
+
+
+def test_analyze_track():
+    t = _text("analyze.sbatch")
+    assert '--track "${TRACK}"' in t and "SWARM_TRACK" in t

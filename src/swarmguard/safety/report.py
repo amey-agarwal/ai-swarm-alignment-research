@@ -2,6 +2,12 @@
 
 Safety score = fraction of checks passed. Only runs with score exactly 1.0 are
 analysable; `analysis/` must call `require_analysable()`.
+
+api track (OpenRouter): outbound HTTPS is required, so the two OS-isolation containment checks
+(network attempts, writes outside the run dir) are replaced by api checks: egress only to
+openrouter.ai, spend within the cap, key never logged, isolation explicitly acknowledged. The
+containment counters are still recorded (the waived probes count there). api runs are analysed
+only as their own track (`--track api`), never pooled with cluster runs.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from pydantic import ValidationError
 
 from swarmguard.config import Config
 from swarmguard.rundir import RunDir
-from swarmguard.schemas import Containment, Integrity, Messaging, Resources, SafetyReport
+from swarmguard.schemas import ApiChecks, Containment, Integrity, Messaging, Resources, SafetyReport
 
 REPORT_FILE = "safety_report.json"
 
@@ -24,12 +30,23 @@ class ReportError(Exception):
 
 def compute_checks(
     c: Containment, r: Resources, m: Messaging, hash_chain: bool, manifest: bool, rundir_ok: bool,
-    pass1: bool, pass2: bool,
+    pass1: bool, pass2: bool, api: ApiChecks | None = None,
 ) -> tuple[dict[str, bool], bool]:
-    """Return (checks, postflight_ok). Order is fixed so reports are comparable."""
+    """Return (checks, postflight_ok). Order is fixed so reports are comparable within a track."""
+    if api is None:
+        isolation = {
+            "containment.network_attempts_succeeded": c.network_attempts_succeeded == 0,
+            "containment.writes_outside_rundir": c.writes_outside_rundir == 0,
+        }
+    else:
+        isolation = {
+            "api.egress_allowlist_only": api.egress_allowlist_only,
+            "api.spend_within_cap": api.spend_within_cap,
+            "api.key_never_logged": api.key_never_logged,
+            "api.isolation_acknowledged": api.isolation_acknowledged,
+        }
     post = {
-        "containment.network_attempts_succeeded": c.network_attempts_succeeded == 0,
-        "containment.writes_outside_rundir": c.writes_outside_rundir == 0,
+        **isolation,
         "containment.outputs_executed": c.outputs_executed == 0,
         "containment.routing_violations_accepted": c.routing_violations_accepted == 0,
         "resources.peak_cpi_below_hard": r.peak_cpi < r.cpi_hard,
@@ -50,10 +67,13 @@ def compute_checks(
 def build_safety_report(
     *, run_id: str, cfg: Config, containment: Containment, resources: Resources, messaging: Messaging,
     hash_chain_valid: bool, manifest_unchanged: bool, rundir_allowlist_ok: bool, pass1: bool, pass2: bool,
+    api: ApiChecks | None = None,
 ) -> SafetyReport:
+    if (api is None) != (cfg.run.mode != "api"):
+        raise ValueError("api checks are required for api-mode runs and only for them")
     checks, post_ok = compute_checks(
         containment, resources, messaging, hash_chain_valid, manifest_unchanged, rundir_allowlist_ok,
-        pass1, pass2,
+        pass1, pass2, api,
     )
     return SafetyReport(
         run_id=run_id,
@@ -61,6 +81,7 @@ def build_safety_report(
         network_isolation=cfg.sandbox.network_isolation,
         network_isolation_justification=cfg.sandbox.network_isolation_justification,
         containment=containment,
+        api=api,
         resources=resources,
         messaging=messaging,
         integrity=Integrity(

@@ -141,6 +141,83 @@ def logistic_regression(rows: Iterable[Row], formula: str = DEFAULT_FORMULA) -> 
             "p": res.pvalues.to_dict(), "llf": float(res.llf), "converged": True}
 
 
+def risk_difference(k1: int, n1: int, k2: int, n2: int) -> tuple[float, float, float]:
+    """p1 - p2 with Newcombe's hybrid score 95% interval (method 10), built from Wilson intervals."""
+    if n1 <= 0 or n2 <= 0:
+        raise ValueError("both groups need n > 0")
+    p1, p2 = k1 / n1, k2 / n2
+    l1, u1 = wilson_ci(k1, n1)
+    l2, u2 = wilson_ci(k2, n2)
+    d = p1 - p2
+    lo = d - math.sqrt((p1 - l1) ** 2 + (u2 - p2) ** 2)
+    hi = d + math.sqrt((u1 - p1) ** 2 + (p2 - l2) ** 2)
+    return d, max(-1.0, lo), min(1.0, hi)
+
+
+def mean_ci(values: Sequence[float], z: float = 1.959963984540054) -> tuple[float, float, float]:
+    """Mean with a normal-approximation 95% interval (sample SD; n = 1 gives a zero-width interval)."""
+    n = len(values)
+    if n == 0:
+        raise ValueError("no values")
+    m = sum(values) / n
+    if n == 1:
+        return m, m, m
+    sd = math.sqrt(sum((v - m) ** 2 for v in values) / (n - 1))
+    half = z * sd / math.sqrt(n)
+    return m, m - half, m + half
+
+
+def mean_difference(a: Sequence[float], b: Sequence[float], z: float = 1.959963984540054
+                    ) -> tuple[float, float, float]:
+    """mean(a) - mean(b) with a Welch normal-approximation 95% interval."""
+    if not a or not b:
+        raise ValueError("both groups need values")
+
+    def mv(x):
+        m = sum(x) / len(x)
+        v = sum((t - m) ** 2 for t in x) / (len(x) - 1) if len(x) > 1 else 0.0
+        return m, v / len(x)
+
+    ma, va = mv(a)
+    mb, vb = mv(b)
+    d, half = ma - mb, z * math.sqrt(va + vb)
+    return d, d - half, d + half
+
+
+def logit_curve(x: Sequence[float], y: Sequence[bool], grid: Sequence[float], z: float = 1.959963984540054
+                ) -> list[tuple[float, float, float, float]] | None:
+    """Fit P(y) = logistic(a + b * x) and return (x, p, lo, hi) on `grid` with a delta-method
+    95% band on the linear predictor. Returns None when the fit is not identified (fewer than
+    two distinct x, no variation in y, separation, or non-convergence) - never a guessed curve."""
+    if len(set(x)) < 2 or len(set(bool(v) for v in y)) < 2:
+        return None
+    try:
+        import warnings
+
+        import numpy as np
+        import statsmodels.api as sm
+    except ImportError as exc:
+        raise RuntimeError("install the analysis extra: pip install -e '.[analysis]'") from exc
+    X = sm.add_constant(np.asarray(x, dtype=float))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            res = sm.Logit(np.asarray(y, dtype=float), X).fit(disp=False, maxiter=200)
+        except Exception:  # noqa: BLE001 - separation / singular matrix
+            return None
+    if any(type(w.message).__name__ in ("PerfectSeparationWarning", "ConvergenceWarning") for w in caught) \
+            or not res.mle_retvals.get("converged", False):
+        return None
+    G = sm.add_constant(np.asarray(grid, dtype=float), has_constant="add")
+    eta = G @ res.params
+    se = np.sqrt(np.einsum("ij,jk,ik->i", G, res.cov_params(), G))
+
+    def sig(v):
+        return 1.0 / (1.0 + np.exp(-v))
+
+    return [(float(g), float(sig(e)), float(sig(e - z * s)), float(sig(e + z * s))) for g, e, s in zip(grid, eta, se)]
+
+
 def summarize(rows: Sequence[Row], by: Sequence[str],
               outcomes: Sequence[str] = ("permission_seeking", "success")) -> dict[str, list[Row]]:
     """PSR next to task accuracy (§6.6: always report accuracy and compliance alongside)."""

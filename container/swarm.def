@@ -1,0 +1,44 @@
+Bootstrap: docker
+From: python:3.11-slim
+
+# swarmguard runtime image (CLAUDE.md §4.1, Step 12).
+# Build from the repo root:   apptainer build swarm.sif container/swarm.def
+# Run only via slurm/common.sh: apptainer exec --nv --containall --cleanenv --no-home
+#   --net --network none, repo bound read-only at /repo, weights read-only at /weights.
+# The code that runs is the manifest-checked /repo/src (PYTHONPATH); the copy installed here
+# only provides dependencies and the `swarm` entry point. No network tools are installed.
+
+%labels
+    org.swarmguard.purpose "sandboxed text-only LLM swarm testbed"
+    org.swarmguard.vllm "0.8.5.post1"
+
+%files
+    pyproject.toml /opt/swarmguard/pyproject.toml
+    README.md /opt/swarmguard/README.md
+    src /opt/swarmguard/src
+
+%post
+    set -eu
+    export PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1
+    python -m pip install --upgrade "pip==24.3.1"
+    # vLLM pinned exactly (brings its matching torch/CUDA wheels). Never installed for tests.
+    python -m pip install "vllm==0.8.5.post1" "/opt/swarmguard[cluster]"
+    rm -rf /root/.cache /tmp/* /opt/swarmguard/src/*.egg-info
+    # Fail the build if any network tool made it into the image.
+    for t in curl wget ssh scp sftp nc ncat netcat telnet ftp rsync socat; do
+        if command -v "$t" >/dev/null 2>&1; then
+            echo "network tool present: $t" >&2
+            exit 1
+        fi
+    done
+
+%environment
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export VLLM_NO_USAGE_STATS=1
+    export DO_NOT_TRACK=1
+    export PYTHONPATH=/repo/src
+
+%test
+    python -c "import vllm, swarmguard, pynvml, psutil, openai; print('vllm', vllm.__version__)"

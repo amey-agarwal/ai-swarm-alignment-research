@@ -1,0 +1,33 @@
+# API track: OpenRouter models, merged over configs/base.yaml.
+#   swarm run --mode api --backend openrouter --config configs/api_openrouter.yaml -m api-model-a ...
+# Runs ONLY inside a CPU Slurm job (slurm/api_sweep.sbatch), outside the container (which has no network).
+#
+# Egress: the LLM client accepts exactly https://openrouter.ai (checked on every request, no
+# redirects, environment proxies ignored). The key is read from api.key_file (chmod 600, outside
+# the repo), never from the environment, and postflight verifies it appears in no run file.
+# Spend: OpenRouter's authoritative key usage must be < usd_hard before every run, and the backend
+# stops sending requests once start usage + this run's cost reaches it. slurm/api_sweep.sbatch
+# emails once at usd_warn. ALSO set a $50 credit limit on the key in the OpenRouter dashboard,
+# and use a fresh key so its usage counts only these runs.
+#
+# This track is scored with its own safety checks (egress allowlist, spend cap, key never logged,
+# isolation acknowledged) instead of OS network isolation, and is analysed only with --track api.
+
+run:
+  mode: api
+  backend: openrouter
+
+sandbox:
+  network_isolation: unavailable
+  network_isolation_justification: >-
+    API track: models are served by OpenRouter, so outbound HTTPS to openrouter.ai is required.
+    No OS egress filter is available on the CPU node; the LLM client enforces an exact-host
+    allowlist on every request, and models remain text-in/text-out with no tools or plugins.
+
+api:
+  key_file: ~/.config/swarmguard/openrouter.key
+  usd_warn: 25
+  usd_hard: 50
+
+model:
+  swarm: api-model-a

@@ -18,6 +18,7 @@
 - **Orchestrator (trusted) vs. models (untrusted).** Models are text-in → text-out. All model output is untrusted data: parsed against a strict schema, validated, routed via an allowlist, and logged. It is never executed, never interpolated into shell commands, file paths, SQL, or code.
 - **Container vs. host.** Apptainer with `--containall --cleanenv --no-home`; repo and weights read-only; only the run directory is writable.
 - **Job vs. network.** vLLM is bound to `127.0.0.1` with a per-job random key; external network access must be unavailable (verified by live probes).
+- **API track (OpenRouter) vs. network.** The one deliberate exception, kept as a separate track (CLAUDE.md §18.3). It runs in a CPU Slurm job outside the container. Egress is limited to `https://openrouter.ai` by the LLM client, which checks every request and refuses others. There is no OS-level filter, so this rests on the client check plus the static scan (no other network module in the package). Assets added: the **OpenRouter key** (private file, never in env/prompt/log/cache; postflight scans run files for it) and the **API credit** (warn $25, hard $50, checked against OpenRouter's authoritative key usage; set a $50 key limit server-side too). Prompts and outputs are disclosed to OpenRouter and the pinned provider; `data_collection: "deny"` is requested. Residual risks: provider-side logging, and overshooting the cap by up to one in-flight episode per parallel task (the server-side key limit bounds it).
 
 ## Out of scope
 

@@ -25,7 +25,7 @@ from swarmguard.safety import integrity
 from swarmguard.safety.preflight import CheckResult, check_static, reference_allowlist
 from swarmguard.safety.probes import NETWORK_PROBES, WRITE_PROBE
 from swarmguard.safety.report import build_safety_report, write_safety_report
-from swarmguard.schemas import Containment, Messaging, Resources, SafetyReport
+from swarmguard.schemas import ApiChecks, Containment, Messaging, Resources, SafetyReport
 
 SWARM_ID = re.compile(r"^a\d{2}$")
 LOG_FILE = "log.jsonl"
@@ -86,6 +86,45 @@ def _count(results: Iterable[CheckResult], names: Iterable[str], bad: tuple[str,
     return sum(1 for c in results if c.name in names and c.status in bad)
 
 
+def _key_absent(rd: RunDir, key_file: str) -> bool:
+    """True if the API key string appears in no file of the run directory (fails closed if the key
+    cannot be read). The key itself is never returned or printed."""
+    from swarmguard.agents.llm_client import LLMError, read_api_key
+
+    try:
+        key = read_api_key(key_file).encode("utf-8")
+    except LLMError:
+        return False
+    for p in rd.entries():
+        try:
+            if p.is_file() and key in p.read_bytes():
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def api_checks(cfg: Config, rd: RunDir, api_summary: dict[str, Any] | None) -> tuple[ApiChecks, list[str]]:
+    problems = []
+    s = api_summary or {}
+    hosts = sorted(s.get("hosts") or [])
+    egress_ok = api_summary is not None and all(h == cfg.api.host for h in hosts)
+    if not egress_ok:
+        problems.append(f"api egress not verifiable or not allowlisted: hosts={hosts}")
+    end_usage = s.get("key_usage_end")
+    if not isinstance(end_usage, (int, float)):
+        end_usage = float(s.get("baseline_usd") or 0.0) + float(s.get("spend_usd") or 0.0) if api_summary else None
+    spend_ok = end_usage is not None and end_usage < cfg.api.usd_hard
+    if not spend_ok:
+        problems.append(f"api spend at/over cap or unknown: {end_usage}")
+    key_ok = _key_absent(rd, cfg.api.key_file)
+    if not key_ok:
+        problems.append("API key found in a run-directory file (or key file unreadable)")
+    ack = cfg.sandbox.network_isolation == "unavailable" and bool((cfg.sandbox.network_isolation_justification or "").strip())
+    return ApiChecks(hosts_contacted=hosts, egress_allowlist_only=egress_ok, spend_within_cap=spend_ok,
+                     key_never_logged=key_ok, isolation_acknowledged=ack), problems
+
+
 def run_postflight(
     cfg: Config,
     rd: RunDir,
@@ -133,6 +172,16 @@ def run_postflight(
         outputs_executed=0 if static_ok else 1,
         routing_violations_accepted=routing_violations,
     )
+    api = None
+    spend = {}
+    if cfg.run.mode == "api":
+        summ = governor_summary.get("api")
+        api, api_problems = api_checks(cfg, rd, summ)
+        problems += api_problems
+        if summ:
+            end = summ.get("key_usage_end")
+            spend = {"spend_usd": float(summ.get("spend_usd") or 0.0), "spend_cap_usd": cfg.api.usd_hard,
+                     "key_usage_usd": float(end) if isinstance(end, (int, float)) else None}
     resources = Resources(
         peak_cpi=float(governor_summary.get("peak_cpi", 0.0)),
         cpi_hard=cfg.governor.hard,
@@ -140,11 +189,12 @@ def run_postflight(
         energy_budget_wh=cfg.budget.energy_wh,
         tokens=int(governor_summary.get("tokens", 0)),
         token_budget=cfg.budget.tokens,
+        **spend,
     )
     report = build_safety_report(
         run_id=rd.run_id, cfg=cfg, containment=containment, resources=resources, messaging=messaging,
         hash_chain_valid=chain_ok, manifest_unchanged=manifest.ok, rundir_allowlist_ok=rcheck.ok,
-        pass1=pass1_ok, pass2=pass2_ok,
+        pass1=pass1_ok, pass2=pass2_ok, api=api,
     )
     if write:
         write_safety_report(rd, report)

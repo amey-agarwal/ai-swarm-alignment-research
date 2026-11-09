@@ -22,6 +22,8 @@ dev = ["pytest>=7"]
 cluster = ["pynvml", "psutil", "openai"]
 # Local exploratory mode: Ollama on 127.0.0.1 via the OpenAI-compatible API (never analysable).
 local = ["psutil", "openai"]
+# API track: OpenRouter over HTTPS (openai client + its httpx dependency) in a CPU Slurm job.
+api = ["psutil", "openai"]
 # Offline analysis (logistic regression, figures). Core metrics and CIs need none of these.
 analysis = ["numpy", "pandas", "scipy", "statsmodels", "matplotlib"]
 

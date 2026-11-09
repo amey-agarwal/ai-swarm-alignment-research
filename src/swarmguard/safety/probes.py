@@ -7,6 +7,9 @@ Slurm job, cluster-mode network/write probes are failed without being attempted.
 local mode (Ollama on a laptop): network/write probes are never attempted and are recorded as
 "waived" (requires sandbox.network_isolation=unavailable + justification); postflight counts
 them as containment failures, so local runs are never analysable.
+api mode (OpenRouter track): the same probes are waived (outbound HTTPS is required), and
+`egress_allowlist` must pass: the LLM client refuses every URL except https://openrouter.ai.
+The api track is scored with its own checks (safety/report.py) and never pooled.
 
 If the platform cannot isolate the network, the network probes fail. The only
 fallback is `sandbox.network_isolation: unavailable` plus a written justification,
@@ -93,8 +96,8 @@ def probe_tcp(cfg: Config, mode: str, connect: Callable[..., Any] = socket.creat
     name = "net_tcp_external"
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
-    if mode == "local":
-        return _local_waived(name, cfg, "network namespace")
+    if mode in ("local", "api"):
+        return _local_waived(name, cfg, "network namespace" if mode == "local" else "OS egress filter (api track)")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
     try:
@@ -113,8 +116,8 @@ def probe_dns(cfg: Config, mode: str, resolve: Callable[..., Any] = socket.getad
     name = "net_dns_external"
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
-    if mode == "local":
-        return _local_waived(name, cfg, "network namespace")
+    if mode in ("local", "api"):
+        return _local_waived(name, cfg, "network namespace" if mode == "local" else "OS egress filter (api track)")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
     try:
@@ -137,9 +140,9 @@ def probe_write_outside(mode: str, targets: list[Path] | None = None, env: Any =
     name = WRITE_PROBE
     if mode == "dev":
         return CheckResult(name, "skipped", SKIP_DEV)
-    if mode == "local":
+    if mode in ("local", "api"):
         if cfg is None:
-            return _fail(name, "local mode probe needs the config")
+            return _fail(name, f"{mode} mode probe needs the config")
         return _local_waived(name, cfg, "read-only mounts")
     if _outside_job(env):
         return _fail(name, NOT_IN_JOB)
@@ -273,6 +276,29 @@ def probe_stop_file(max_rounds: int = 5) -> CheckResult:
         return _fail(name, "STOP file never detected")
 
 
+EGRESS_REFUSE = ("https://example.com/api/v1", "http://openrouter.ai/api/v1", "https://openrouter.ai.evil.example/x",
+                 "https://evil.example/openrouter.ai", "https://user:pw@openrouter.ai/api/v1",
+                 "https://openrouter.ai:8443/api/v1", "https://127.0.0.1/api/v1")
+
+
+def probe_egress_allowlist(check: Callable[[str], Any] | None = None) -> CheckResult:
+    """api mode: the client's egress check must accept https://openrouter.ai and refuse everything else."""
+    name = "egress_allowlist"
+    if check is None:
+        from swarmguard.agents.llm_client import check_api_url as check
+    try:
+        check("https://openrouter.ai/api/v1/chat/completions")
+    except Exception as exc:  # noqa: BLE001
+        return _fail(name, f"allowlisted URL refused: {exc!r}")
+    for url in EGRESS_REFUSE:
+        try:
+            check(url)
+        except Exception:  # noqa: BLE001 - refusal is the expected outcome
+            continue
+        return _fail(name, f"non-allowlisted URL ACCEPTED: {url}")
+    return _pass(name, f"only https://openrouter.ai accepted ({len(EGRESS_REFUSE)} others refused)")
+
+
 # ----------------------------------------------------------------------------- pass 2
 
 
@@ -288,4 +314,6 @@ def run_pass2(cfg: Config, mode: str | None = None) -> PassResult:
         probe_governor(cfg, mode),
         probe_stop_file(),
     ]
+    if mode == "api":
+        res.checks.append(probe_egress_allowlist())
     return res
