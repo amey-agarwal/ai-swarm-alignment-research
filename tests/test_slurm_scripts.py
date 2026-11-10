@@ -139,3 +139,55 @@ def test_submit_guard_behaviour(tmp_path):
                                      capture_output=True, text=True, timeout=10)
     assert run(repo).returncode == 1 and run(repo / "sub").returncode == 1
     assert run(tmp_path).returncode == 0 and "ok" in run(tmp_path).stdout
+
+
+def test_tests_sbatch():
+    t = _text("tests.sbatch")
+    subprocess.run(["bash", "-n", str(SLURM / "tests.sbatch")], check=True, timeout=10)
+    assert "--gres" not in t and "-m pytest -q" in t and "doctor --mode dev" in t and "env -i" in t
+    assert "#SBATCH --mail-type=END,FAIL" in t and 'refuse_submit_inside_repo' in t
+
+
+@pytest.mark.parametrize("name,mail", [("run_single.sbatch", "END,FAIL"), ("sweep_array.sbatch", "END,FAIL,ARRAY_TASKS"),
+                                       ("analyze.sbatch", "END,FAIL")])
+def test_jobs_email_on_end_and_fail(name, mail):
+    assert f"#SBATCH --mail-type={mail}\n" in _text(name)
+
+
+def test_pipeline_chain():
+    t = _text("pipeline.sh")
+    subprocess.run(["bash", "-n", str(SLURM / "pipeline.sh")], check=True, timeout=10)
+    assert "--kill-on-invalid-dep=yes" in t and '--mail-user="${SWARM_NOTIFY_EMAIL}"' in t
+    for stage in ("tests.sbatch", "run_single.sbatch", "sweep_array.sbatch", "analyze.sbatch"):
+        assert stage in t
+    assert "submit afterok" in t and "submit afterany \"${S}/analyze.sbatch\"" in t
+    assert "refuse_submit_inside_repo" in t and "openrouter" not in t.lower()  # API track stays on standby
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_pipeline_dry_run(tmp_path):
+    """Run pipeline.sh against a fake sbatch that records its arguments: order and dependencies."""
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    log = tmp_path / "calls"
+    (fake / "sbatch").write_text(f'#!/bin/bash\necho "$@" >> "{log}"\necho $(( 100 + $(wc -l < "{log}") ))\n')
+    (fake / "sbatch").chmod(0o755)
+    work = tmp_path / "work"
+    work.mkdir()
+    env = {"PATH": f"{fake}:/usr/bin:/bin", "SWARM_REPO": str(REPO_ROOT), "SWARM_SIF": "x", "SWARM_WEIGHTS": "x",
+           "SWARM_RUNS": str(work), "SWARM_VENV": "x", "SWARM_REPORT": str(tmp_path / "rep"),
+           "SWARM_NOTIFY_EMAIL": "me@example.edu", "SBATCH_ACCOUNT": "a", "SBATCH_QOS": "q"}
+    r = subprocess.run(["bash", str(SLURM / "pipeline.sh")], cwd=work, env=env, capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text().splitlines()
+    assert len(calls) == 4
+    assert "tests.sbatch" in calls[0] and "--dependency" not in calls[0]
+    assert "--dependency=afterok:101" in calls[1] and "run_single.sbatch" in calls[1]
+    assert "--dependency=afterok:102" in calls[2] and "--array=0-11%6" in calls[2] and "ARRAY_TASKS" in calls[2]
+    assert "--dependency=afterany:103" in calls[3] and "analyze.sbatch" in calls[3]
+    assert all("--mail-user=me@example.edu" in c and "--mail-type=END,FAIL" in c for c in calls)
+    # refused from inside the repo
+    r = subprocess.run(["bash", str(SLURM / "pipeline.sh")], cwd=REPO_ROOT, env=env, capture_output=True, text=True,
+                       timeout=20)
+    assert r.returncode == 1 and "inside the repo" in r.stderr

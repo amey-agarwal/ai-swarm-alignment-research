@@ -150,6 +150,22 @@ when free disk falls below `disk.min_free_frac` (10 %).
 7. **Analyse:** `swarm analyze $SWARM_RUNS --agreement <validation_run>/metrics.json --out ../swarmguard-analysis/`.
 8. **Report figures:** see below.
 
+## One-command cluster pipeline
+
+`slurm/pipeline.sh` submits every stage as a chain of dependent jobs:
+tests (CPU) → smoke episode (GPU, must reach safety score 1.0) → grid array (GPU) → report (CPU).
+Every job emails at END and on FAIL; array jobs email per task. A failed stage cancels the stages
+that depend on it. The report still runs if only some grid tasks failed.
+
+```bash
+export SWARM_REPO=~/swarmguard SWARM_SIF=... SWARM_WEIGHTS=... SWARM_RUNS=~/scratch/swarm_runs
+export SWARM_VENV=~/swarm-venv SWARM_REPORT=~/scratch/report SWARM_NOTIFY_EMAIL=<you>@gatech.edu
+export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno
+cd "$SWARM_RUNS" && bash "$SWARM_REPO/slurm/pipeline.sh"      # SWARM_ARRAY=0-19%6 for all 200 tasks
+```
+`SWARM_STAGES=calib,tests,smoke,grid,report` adds the calibration pilot. The venv needs
+`pip install -e "$SWARM_REPO[dev,analysis]"`.
+
 ## API track (OpenRouter)
 
 A separate track runs frontier models through [OpenRouter](https://openrouter.ai) with the same

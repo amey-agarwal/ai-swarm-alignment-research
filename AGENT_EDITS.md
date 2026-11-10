@@ -228,3 +228,13 @@ Tests: see summary line below (run after this entry)
 Doctor: dev PASS
 Manifest: regenerated after this entry
 Open issues: (1) Alternative to the guard: exclude slurm-*.out in safety/integrity.py (protected; needs "approved: edit"). (2) docs/hypotheses.md is still marked DRAFT: finalise and commit before real runs. (3) data/labels has no human labels, so the judge κ gate cannot pass: reports will use the tracer outcome. (4) grid_core.yaml task level (logic-grid:L4) is a placeholder until the calibration pilot. (5) OpenRouter track on standby: only --mode api --backend openrouter (both required), swarm spend, or the api_*.sbatch scripts touch it; current key returns 401 "User not found".
+
+## Extra — One-command cluster pipeline with email checkpoints — 2026-11-10 18:41
+Files created: slurm/pipeline.sh, slurm/tests.sbatch
+Files modified: slurm/run_single.sbatch, slurm/sweep_array.sbatch, slurm/analyze.sbatch, tests/test_slurm_scripts.py, README.md, MANIFEST.json
+Functions/classes added or changed: pipeline.sh submit() (bash)
+Reason: User asked to run all jobs and tests sequentially with an email on every completed job and on errors. pipeline.sh chains tests (CPU) -> smoke (GPU) -> grid array (GPU) -> report (CPU) with afterok/afterany dependencies, --kill-on-invalid-dep=yes, and --mail-type=END,FAIL (+ARRAY_TASKS for arrays) to SWARM_NOTIFY_EMAIL; the job files default to END,FAIL mail to the submitting user. The API track is not part of the pipeline (standby).
+Tests: see summary below (run after this entry)
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: (1) Per-array-task emails: 12 for the default array (0-11), 20 for the full grid. (2) Calibration (calib stage) is optional and does not change grid_core.yaml automatically. (3) The judge is not in the pipeline: it needs per-run submission and, for κ, human labels that do not exist yet.
