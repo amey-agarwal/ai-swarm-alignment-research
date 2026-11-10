@@ -121,3 +121,21 @@ def test_api_sweep_spend_alerts():
 def test_analyze_track():
     t = _text("analyze.sbatch")
     assert '--track "${TRACK}"' in t and "SWARM_TRACK" in t
+
+
+@pytest.mark.parametrize("name", ["run_single.sbatch", "sweep_array.sbatch", "analyze.sbatch", "api_check.sbatch",
+                                  "api_sweep.sbatch"])
+def test_every_sbatch_refuses_submission_inside_repo(name):
+    assert 'slurm/submit_guard.sh" && refuse_submit_inside_repo' in _text(name)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_submit_guard_behaviour(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "sub").mkdir(parents=True)
+    guard = SLURM / "submit_guard.sh"
+    run = lambda sub: subprocess.run(["bash", "-c", f'source "{guard}"; refuse_submit_inside_repo; echo ok'],
+                                     env={"PATH": "/usr/bin:/bin", "SWARM_REPO": str(repo), "SLURM_SUBMIT_DIR": str(sub)},
+                                     capture_output=True, text=True, timeout=10)
+    assert run(repo).returncode == 1 and run(repo / "sub").returncode == 1
+    assert run(tmp_path).returncode == 0 and "ok" in run(tmp_path).stdout

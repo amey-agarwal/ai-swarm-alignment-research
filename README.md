@@ -138,11 +138,12 @@ when free disk falls below `disk.min_free_frac` (10 %).
    export SWARM_REPO=$PWD SWARM_SIF=/path/swarm.sif SWARM_WEIGHTS=/path/weights SWARM_RUNS=/path/runs
    export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno SALLOC_ACCOUNT=gts-<pi> SALLOC_QOS=inferno
    swarm sweep configs/grid_core.yaml --count        # 200 tasks
-   sbatch --array=0-19%4 slurm/sweep_array.sbatch configs/grid_core.yaml
+   cd "$SWARM_RUNS"    # submit from OUTSIDE the repo: Slurm logs land here, not in the manifest-checked repo
+   sbatch --array=0-19%4 "$SWARM_REPO/slurm/sweep_array.sbatch" configs/grid_core.yaml
    ```
 6. **Judge and validate:** Gemma-3-27B (~54 GB in bf16) does not fit one 40 GB A100, so request two
    (vLLM splits it with tensor parallelism):
-   `ACTION=judge MODEL_KEY=gemma-3-27b sbatch --gres=gpu:A100:2 slurm/run_single.sbatch <run_id>`
+   `ACTION=judge MODEL_KEY=gemma-3-27b sbatch --gres=gpu:A100:2 "$SWARM_REPO/slurm/run_single.sbatch" <run_id>`
    for each run. For κ, open `SWARM_GPUS=2 bash slurm/interactive.sh gemma-3-27b` and, in the container shell, run
    `swarm judge --validate data/labels/<file>.jsonl --mode cluster --backend vllm --out /runs`
    on the ~200 human-labelled messages.
@@ -167,13 +168,13 @@ Run on PACE (CPU jobs, no GPU or container):
 ```bash
 export SWARM_REPO=$PWD SWARM_VENV=/path/venv SWARM_RUNS_API=/path/runs_api SWARM_NOTIFY_EMAIL=<you>@gatech.edu
 export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno
-jid=$(sbatch --parsable slurm/api_check.sbatch)                          # outbound, key file, doctor, spend
+jid=$(sbatch --parsable "$SWARM_REPO/slurm/api_check.sbatch")                          # outbound, key file, doctor, spend
 pilot=$(sbatch --parsable --dependency=afterok:$jid --array=0 --export=ALL,TASKS_PER_JOB=1 \
-        slurm/api_sweep.sbatch configs/grid_openrouter.yaml)              # 1 episode: check the cost
+        "$SWARM_REPO/slurm/api_sweep.sbatch" configs/grid_openrouter.yaml)              # 1 episode: check the cost
 # after checking `swarm spend`:
-runs=$(sbatch --parsable --array=0-1%2 slurm/api_sweep.sbatch configs/grid_openrouter.yaml)
+runs=$(sbatch --parsable --array=0-1%2 "$SWARM_REPO/slurm/api_sweep.sbatch" configs/grid_openrouter.yaml)
 SWARM_TRACK=api SWARM_RUNS=$SWARM_RUNS_API SWARM_REPORT=/path/report_api \
-  sbatch --dependency=afterany:$runs slurm/analyze.sbatch
+  sbatch --dependency=afterany:$runs "$SWARM_REPO/slurm/analyze.sbatch"
 ```
 
 Safeguards:
@@ -193,7 +194,7 @@ Locally: `swarm analyze <runs> --track api` and `swarm report <runs> --out <dir>
 ```bash
 swarm report $SWARM_RUNS --out /path/outside/repo/report --agreement <validation_run>/metrics.json
 # on PACE, chained after the runs (CPU only, 15 min):
-SWARM_REPORT=/path/report SWARM_VENV=/path/venv sbatch --dependency=afterany:<jobid> slurm/analyze.sbatch
+SWARM_REPORT=/path/report SWARM_VENV=/path/venv sbatch --dependency=afterany:<jobid> "$SWARM_REPO/slurm/analyze.sbatch"
 ```
 
 It writes `figures/` (PDF + 300-dpi PNG), `data/` (a CSV of exactly the plotted numbers for every

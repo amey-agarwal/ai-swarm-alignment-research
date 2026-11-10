@@ -218,3 +218,13 @@ Tests: 918 passed
 Doctor: dev PASS
 Manifest: 128 files
 Open issues: (1) configs/models.yaml api-model-a/b are CHANGEME placeholders: pass 1 refuses them until the user sets openrouter_id + providers, then runs swarm manifest. (2) Spend overshoot is bounded by one in-flight episode per parallel array task (per-request cap uses start usage + own spend); the $50 key credit limit in the OpenRouter dashboard is the server-side backstop. (3) The warn/hard emails come from Slurm mail-only jobs submitted by api_sweep.sbatch (needs sbatch on compute nodes and working Slurm mail: see PACE-Checks.sh step 9). (4) usage.cost is read as USD (OpenRouter credits). (5) The installed openai 3.x depends on httpx2, not httpx; the client uses httpx2 when present, and the static scan now flags httpx2 outside llm_client. (6) No live OpenRouter call was made during development (all tests fake the client and the key endpoint). (7) /Users/ameyagarwal/Desktop/CLAUDE.md is an identical pre-amendment copy outside the repo; it was not changed. (8) The safety/** lock is still not activated.
+
+## Extra — PACE readiness fixes: manifest re-baseline, submit-dir guard — 2026-11-10 18:28
+Files created: slurm/submit_guard.sh
+Files modified: slurm/run_single.sbatch, slurm/sweep_array.sbatch, slurm/analyze.sbatch, slurm/api_check.sbatch, slurm/api_sweep.sbatch, PACE-Checks.sh, README.md, tests/test_slurm_scripts.py, MANIFEST.json
+Functions/classes added or changed: refuse_submit_inside_repo (bash)
+Reason: (1) Commit a8e422c had a MANIFEST.json that no longer matched AGENT_EDITS.md (the previous entry was appended after the manifest was regenerated), so pass 1 failed for every run; re-baselined. (2) Slurm writes slurm-*.out into the submit directory; submitting from the repo root put an unexpected file in the manifest-checked tree and would fail every job's pass 1. All sbatch scripts now refuse at once with instructions, the README submits from $SWARM_RUNS with $SWARM_REPO/slurm/... paths, and PACE-Checks.sh writes its mail-test logs to $HOME.
+Tests: see summary line below (run after this entry)
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: (1) Alternative to the guard: exclude slurm-*.out in safety/integrity.py (protected; needs "approved: edit"). (2) docs/hypotheses.md is still marked DRAFT: finalise and commit before real runs. (3) data/labels has no human labels, so the judge κ gate cannot pass: reports will use the tracer outcome. (4) grid_core.yaml task level (logic-grid:L4) is a placeholder until the calibration pilot. (5) OpenRouter track on standby: only --mode api --backend openrouter (both required), swarm spend, or the api_*.sbatch scripts touch it; current key returns 401 "User not found".

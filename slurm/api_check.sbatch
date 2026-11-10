@@ -22,6 +22,7 @@
 set -euo pipefail
 : "${SLURM_JOB_ID:?must run inside a Slurm job (never on a login node)}"
 : "${SWARM_REPO:?set SWARM_REPO}" "${SWARM_VENV:?set SWARM_VENV}"
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 CONFIG="${SWARM_API_CONFIG:-configs/api_openrouter.yaml}"
 cd "${SWARM_REPO}"
 

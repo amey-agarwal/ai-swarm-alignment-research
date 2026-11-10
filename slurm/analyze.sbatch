@@ -29,6 +29,7 @@ set -euo pipefail
 : "${SLURM_JOB_ID:?must run inside a Slurm job (never on a login node)}"
 : "${SWARM_REPO:?set SWARM_REPO}" "${SWARM_RUNS:?set SWARM_RUNS}" "${SWARM_REPORT:?set SWARM_REPORT}"
 : "${SWARM_VENV:?set SWARM_VENV to a venv with the analysis extra installed}"
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 
 TRACK="${SWARM_TRACK:-cluster}"
 [[ "${TRACK}" == "cluster" || "${TRACK}" == "api" ]] || { echo "SWARM_TRACK must be cluster or api"; exit 1; }

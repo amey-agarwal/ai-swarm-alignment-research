@@ -16,6 +16,7 @@
 # committed here. Before submitting:
 #   export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno      # or SBATCH_QOS=embers (free, preemptible)
 set -euo pipefail
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 source "${SWARM_REPO:?set SWARM_REPO}/slurm/common.sh"
 
 GRID="${1:-configs/grid_core.yaml}"
