@@ -174,10 +174,14 @@ def run_postflight(
     )
     api = None
     spend = {}
-    if cfg.run.mode == "api":
+    if cfg.run.backend == "openrouter":
+        # Same egress / spend / key-leak checks in api and local mode. Local OpenRouter runs report
+        # failures as postflight problems; only api-mode reports carry the api section (scored track).
         summ = governor_summary.get("api")
-        api, api_problems = api_checks(cfg, rd, summ)
+        api_res, api_problems = api_checks(cfg, rd, summ)
         problems += api_problems
+        if cfg.run.mode == "api":
+            api = api_res
         if summ:
             end = summ.get("key_usage_end")
             spend = {"spend_usd": float(summ.get("spend_usd") or 0.0), "spend_cap_usd": cfg.api.usd_hard,

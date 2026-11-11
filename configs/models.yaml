@@ -83,17 +83,19 @@ models:
   # providers: the OpenRouter provider slug(s) allowed to serve it (pinned; fallbacks are always
   # off; require_parameters=true, so the provider must honour seed + JSON schema). No Qwen/DeepSeek
   # models or providers. params_b is left out: unknown for API models (excluded from scaling plots).
+  # Providers chosen 2026-11-09 from openrouter.ai/api/v1/models/<id>/endpoints: bf16 endpoints that
+  # list structured_outputs (strict JSON schema) and seed. Re-check if a run reports "no endpoints".
   api-model-a:
-    hf_id: CHANGEME/model-a
-    openrouter_id: CHANGEME/model-a
-    providers: [CHANGEME]
+    hf_id: meta-llama/llama-3.1-8b-instruct
+    openrouter_id: meta-llama/llama-3.1-8b-instruct
+    providers: [coreweave/bf16]
     role: swarm
     license: provider-terms
     gated: false
   api-model-b:
-    hf_id: CHANGEME/model-b
-    openrouter_id: CHANGEME/model-b
-    providers: [CHANGEME]
+    hf_id: meta-llama/llama-3.2-3b-instruct
+    openrouter_id: meta-llama/llama-3.2-3b-instruct
+    providers: [parasail/bf16]
     role: swarm
     license: provider-terms
     gated: false

@@ -259,10 +259,15 @@ class Config(_Strict):
     def _mode_backend(self) -> "Config":
         if self.run.mode == "dev" and self.run.backend == "vllm":
             raise ValueError("vllm backend is refused in dev mode")
-        if (self.run.backend == "ollama") != (self.run.mode == "local"):
-            raise ValueError("the ollama backend requires local mode, and local mode requires the ollama backend")
-        if (self.run.backend == "openrouter") != (self.run.mode == "api"):
-            raise ValueError("the openrouter backend requires api mode, and api mode requires the openrouter backend")
+        if self.run.backend == "ollama" and self.run.mode != "local":
+            raise ValueError("the ollama backend requires local mode")
+        if self.run.mode == "local" and self.run.backend not in ("ollama", "openrouter"):
+            raise ValueError("local mode requires the ollama or openrouter backend")
+        if self.run.backend == "openrouter" and self.run.mode not in ("api", "local"):
+            raise ValueError("the openrouter backend requires api mode (Slurm, analysable track) or local mode "
+                             "(laptop, exploratory, never analysed)")
+        if self.run.mode == "api" and self.run.backend != "openrouter":
+            raise ValueError("api mode requires the openrouter backend")
         if self.run.mode == "api" and self.sandbox.network_isolation != "unavailable":
             raise ValueError("api mode needs outbound HTTPS to openrouter.ai: set sandbox.network_isolation="
                              "unavailable with a written justification (see configs/api_openrouter.yaml)")

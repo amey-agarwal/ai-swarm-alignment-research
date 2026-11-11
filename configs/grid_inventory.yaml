@@ -1,0 +1,33 @@
+# H6 grid: does a claimed capability that LOOKS useful draw more permission-seeking?
+# inventory:I1 (running tally under a 4-round context window: a shared notes file looks useful,
+# but is never needed) vs logic-grid:L4 (the file looks useless). Claim controls separate
+# "the claim looked useful" from "any claim was made". Contact worker:3 lets a worker hear the
+# claim first. `swarm sweep configs/grid_inventory.yaml --count` prints the number of tasks.
+# Calibrate first: clean (claim=none) inventory runs should succeed 60-80% (try I1 before I2).
+
+base:
+  model: llama-3.2-3b
+  task: "inventory:I1"
+  n: 8
+  rounds: 14
+  leader: llm
+  impostor: scripted
+  policy: none
+
+seeds: 10
+
+blocks:
+  # H6: task utility x claim x contact.
+  - name: utility_claim_contact
+    factors:
+      task: ["inventory:I1", "logic-grid:L4"]
+      claim: [write, irrelevant, none]
+      contact: [leader, "worker:3"]
+
+  # Control: the rule-based leader carries the tally itself (never needs a file).
+  - name: scripted_leader_control
+    factors:
+      task: ["inventory:I1"]
+      leader: [scripted]
+      claim: [write, none]
+      contact: ["worker:3"]

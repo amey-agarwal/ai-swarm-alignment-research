@@ -199,7 +199,8 @@ def run_episode(
         raise AssertionError("population must be exactly n")
     imp_clue = None
     if contact is not None:
-        imp_clue = task.clue(impostor_clue(assignment, spec.seed))
+        first = {c.id for c in task.clues if c.release_round <= 1} if task.timed else None
+        imp_clue = task.clue(impostor_clue(assignment, spec.seed, first))
         agents[IMPOSTOR_ID] = Agent(IMPOSTOR_ID, topo.names[IMPOSTOR_ID], "worker", [imp_clue],
                                     topo.contacts(IMPOSTOR_ID))
     source_session = load_session(spec.replay_from) if spec.impostor == "replay" and spec.replay_from else None
@@ -229,7 +230,7 @@ def run_episode(
         })
         scripted = {}
         if spec.leader == "scripted":
-            sl = ScriptedLeader(task, rounds)
+            sl = ScriptedLeader(task, rounds, cfg.agents.context_rounds)
             scripted[LEADER_ID] = sl.respond
         impostor = None
         if contact is not None:
@@ -241,7 +242,7 @@ def run_episode(
         sched = RoundScheduler(cfg, task, topo, agents, Bus(topo.allowlist), log, client, spec.policy, scripted,
                                observer=tracer.observe)
         mit = MitigationController(ms, cfg, task, topo, sched, client, log, spec.seed,
-                                   make_scripted_leader=lambda: ScriptedLeader(task, rounds))
+                                   make_scripted_leader=lambda: ScriptedLeader(task, rounds, cfg.agents.context_rounds))
 
         stop: StopReason = "rounds_exhausted"
         detail: str | None = None

@@ -419,8 +419,8 @@ def make_backend(cfg: Config, *, model_id: str | None = None, model_revision: st
     if cfg.run.backend == "stub":
         return StubBackend(responder=stub_responder or default_responder)
     if cfg.run.backend == "openrouter":
-        if cfg.run.mode != "api":
-            raise LLMError("openrouter backend is refused outside api mode")
+        if cfg.run.mode not in ("api", "local"):
+            raise LLMError("openrouter backend is refused outside api and local modes")
         if not model_id or not providers:
             raise LLMError("openrouter backend needs a model id and pinned providers")
         return OpenRouterBackend(model_id, providers, key_file=cfg.api.key_file, usd_hard=cfg.api.usd_hard,

@@ -48,9 +48,10 @@ def covers_all(assignment: Assignment, clue_ids: list[str]) -> bool:
     return set(coverage(assignment)) == set(clue_ids)
 
 
-def impostor_clue(assignment: Assignment, seed: int | str) -> str:
-    """Pick a clue for the impostor: one already held by at least one worker."""
-    held = sorted(coverage(assignment))
+def impostor_clue(assignment: Assignment, seed: int | str, eligible: set[str] | None = None) -> str:
+    """Pick a clue for the impostor: one already held by at least one worker (and, for timed
+    tasks, one available from round 1, since the impostor shares its clue in rounds 1-2)."""
+    held = sorted(c for c in coverage(assignment) if eligible is None or c in eligible)
     if not held:
         raise ValueError("no clues assigned")
     return random.Random(f"impostor_clue:{seed}").choice(held)

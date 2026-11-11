@@ -121,7 +121,8 @@ class RoundScheduler:
         schema = leader_json_schema(names) if agent.role == "leader" else worker_json_schema(names)
         msgs = [
             ("system", self.system_prompt(agent)),
-            ("user", prompts.user_turn(agent, round_idx, self.cfg.episode.rounds, self.cfg.agents.context_rounds)),
+            ("user", prompts.user_turn(agent, round_idx, self.cfg.episode.rounds, self.cfg.agents.context_rounds,
+                                       timed=self.task.timed)),
         ]
         sampling = SamplingParams(
             temperature=self.cfg.llm.temperature,

@@ -44,3 +44,7 @@ report/*.pdf
 
 # OS
 .DS_Store
+
+# secrets: never commit (swarmguard reads the OpenRouter key only from api.key_file)
+.env
+.env.*

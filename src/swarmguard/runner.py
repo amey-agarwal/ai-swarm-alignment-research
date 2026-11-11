@@ -32,7 +32,7 @@ from swarmguard.safety.postflight import run_postflight
 from swarmguard.safety.preflight import PassResult, resolve_config, run_pass1
 from swarmguard.safety.probes import run_pass2
 from swarmguard.schemas import SafetyReport
-from swarmguard.tasks.base import TASK_SPECS, get_task
+from swarmguard.tasks.base import TASK_NUMBERS, TASK_SPECS, get_task, resolve_task
 
 DEFAULT_ROOT = REPO_ROOT  # repo checked by pass 1 / postflight (tests point this at a temp copy)
 PORT_ENV = "SWARM_VLLM_PORT"
@@ -104,7 +104,7 @@ def validate_options(o: RunOptions) -> list[str]:
     try:
         get_task(o.task)
     except ValueError:
-        errs.append(f"--task must be one of {TASK_SPECS}")
+        errs.append(f"--task must be a number {tuple(TASK_NUMBERS)} or one of {TASK_SPECS}")
     models = load_models()
     if o.model not in models or models[o.model].role != "swarm":
         errs.append(f"--model {o.model!r} is not a swarm model in configs/models.yaml")
@@ -135,7 +135,17 @@ def _passes(mapping: dict[str, Any], mode: str, root: Path, env: dict[str, str]
     cfg, _ = resolve_config(mapping, mode)
     if not p1.ok or cfg is None:
         return p1, None, cfg
-    return p1, run_pass2(cfg, mode), cfg
+    return p1, run_pass2_for(cfg, mode), cfg
+
+
+def run_pass2_for(cfg: Config, mode: str) -> PassResult:
+    """Pass 2, plus the egress-allowlist probe for local OpenRouter runs (api mode already has it)."""
+    from swarmguard.safety.probes import probe_egress_allowlist
+
+    res = run_pass2(cfg, mode)
+    if mode == "local" and cfg.run.backend == "openrouter":
+        res.checks.append(probe_egress_allowlist())
+    return res
 
 
 def _client(cfg: Config, rd: RunDir, model_key: str, responder=None) -> tuple[LLMClient, str, str | None]:
@@ -162,6 +172,7 @@ def execute_run(o: RunOptions, *, root: Path | None = None, env: dict[str, str] 
                 out: Out = print, input_fn: Callable[[str], str] = input, responder=None) -> Outcome:
     root = root or DEFAULT_ROOT
     env = _env(env)
+    o = replace(o, task=resolve_task(o.task))  # logs and replay only ever see the full task name
     errs = validate_options(o)
     if errs:
         return Outcome(2, "invalid options: " + "; ".join(errs))
@@ -218,7 +229,7 @@ def execute_run(o: RunOptions, *, root: Path | None = None, env: dict[str, str] 
             ks.uninstall_signal_handlers()
 
     summary = gov.summary()
-    if cfg.run.mode == "api":
+    if cfg.run.backend == "openrouter":
         summary["api"] = _api_summary(client)
     report, problems = run_postflight(cfg, rd, pass1_ok=p1.ok, pass2_ok=p2.ok, probe_results=p2.checks,
                                       governor_summary=summary, root=root)

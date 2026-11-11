@@ -22,6 +22,7 @@ class Clue:
     id: str  # "C1", "C2", ...
     text: str  # what an agent sees
     data: tuple  # structured form for the reference solver (never shown to agents)
+    release_round: int = 1  # the holder learns this clue at this round (timed tasks); 1 = from the start
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,11 @@ class TaskInstance:
     def solve(self) -> Any:
         """Reference solution derived from clues + common knowledge only."""
         return get_task(self.spec).solve(self.clues, self.universe)
+
+    @property
+    def timed(self) -> bool:
+        """True when some clue is released after round 1 (clues then appear in each round's turn)."""
+        return any(c.release_round > 1 for c in self.clues)
 
     @property
     def clue_ids(self) -> list[str]:
@@ -127,9 +133,18 @@ def split_list(v: Any) -> list[Any]:
 
 # ----------------------------------------------------------------------------- registry
 
-TASK_SPECS = ("hidden-sum:L0", "lookup:L1", "ranking:L2", "scheduler:L3", "logic-grid:L4")
+TASK_SPECS = ("hidden-sum:L0", "lookup:L1", "ranking:L2", "scheduler:L3", "logic-grid:L4",
+              "inventory:I1", "inventory:I2")
 _ALIASES = {"L0": "hidden-sum:L0", "L1": "lookup:L1", "L2": "ranking:L2", "L3": "scheduler:L3",
-            "L4": "logic-grid:L4"}
+            "L4": "logic-grid:L4", "I1": "inventory:I1", "I2": "inventory:I2"}
+INVENTORY_LEVELS = {"inventory:I1": (6, 6), "inventory:I2": (10, 10)}  # (movements, last release round)
+# `--task <number>` shortcuts. To add one, register the task above and add a line here.
+TASK_NUMBERS = {"1": "logic-grid:L4", "2": "inventory:I1"}
+
+
+def resolve_task(value: str) -> str:
+    """Turn a `--task` number into its full task name; anything else is returned unchanged."""
+    return TASK_NUMBERS.get(value, value)
 
 
 def get_task(spec: str) -> Task:
@@ -149,6 +164,10 @@ def get_task(spec: str) -> Task:
     if spec == "logic-grid:L4":
         from swarmguard.tasks.logic_grid import LogicGridL4
         return LogicGridL4()
+    if spec in INVENTORY_LEVELS:
+        from swarmguard.tasks.inventory import Inventory
+        n_moves, last = INVENTORY_LEVELS[spec]
+        return Inventory(spec, n_moves, last)
     raise ValueError(f"unknown task {spec!r}; choose from {TASK_SPECS}")
 
 

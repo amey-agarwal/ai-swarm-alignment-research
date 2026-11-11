@@ -142,7 +142,18 @@ def test_open_weight_entry_needs_params():
         ModelEntry(hf_id="meta-llama/x", role="swarm", license="x", gated=False)
 
 
-def test_placeholders_refused_by_pass1(repo_copy, api_yaml, env, monkeypatch):
+def test_placeholders_refused_by_pass1(tmp_path, repo_copy, api_yaml, env, monkeypatch):
+    import yaml
+
+    from swarmguard.config import MODELS_CONFIG
+    from swarmguard.config import load_models as real_load
+
+    data = yaml.safe_load(MODELS_CONFIG.read_text())
+    data["models"]["api-model-a"].update(hf_id="CHANGEME/model-a", openrouter_id="CHANGEME/model-a",
+                                         providers=["CHANGEME"])
+    models = tmp_path / "models.yaml"
+    models.write_text(yaml.safe_dump(data))
+    monkeypatch.setattr(preflight, "load_models", lambda: real_load(models))
     monkeypatch.setattr(lc, "fetch_key_usage", Usage())
     p1 = preflight.run_pass1(api_yaml, "api", root=repo_copy, env=env)
     assert not p1.ok and "CHANGEME" in p1.get("models").detail
@@ -226,7 +237,7 @@ def test_make_backend_refuses_outside_api(key_file, fake_api):
     from swarmguard.config import RunCfg
 
     cfg = load_config().model_copy(update={"run": RunCfg.model_construct(mode="cluster", backend="openrouter", seed=0)})
-    with pytest.raises(lc.LLMError, match="api mode"):
+    with pytest.raises(lc.LLMError, match="outside api and local modes"):
         lc.make_backend(cfg, model_id="acme/model", providers=["acme"])
 
 
@@ -319,7 +330,7 @@ def test_api_report_requires_api_checks():
 
 def test_cluster_runs_cannot_use_openrouter_models(repo_copy, env):
     p1 = preflight.run_pass1({"model": {"swarm": "api-model-a"}}, "dev", root=repo_copy, env=env)
-    assert not p1.ok and "only in api mode" in p1.get("models").detail
+    assert not p1.ok and "only with the openrouter backend" in p1.get("models").detail
 
 
 def test_api_key_never_in_environment_check(repo_copy, env):
@@ -335,3 +346,68 @@ def test_judge_config_for_api_runs_passes_model_check(repo_copy, env):
     from swarmguard.config import Config
 
     assert preflight.check_models(Config.model_validate(run_cfg)).status == "pass"
+
+
+# --- local mode with OpenRouter (laptop, exploratory, never analysed) ----------------------------
+
+LOCAL_OR_YAML = CONFIG_DIR / "local_openrouter.yaml"
+
+
+@pytest.fixture
+def local_or_yaml(tmp_path, key_file):
+    data = LOCAL_OR_YAML.read_text().replace("~/.config/swarmguard/openrouter.key", str(key_file))
+    p = tmp_path / "local_or.yaml"
+    p.write_text(data)
+    return p
+
+
+def test_local_openrouter_config_valid():
+    cfg = load_config(LOCAL_OR_YAML)
+    assert cfg.run.mode == "local" and cfg.run.backend == "openrouter"
+    with pytest.raises(ValueError):
+        load_config(LOCAL_OR_YAML, overrides={"run": {"mode": "cluster"}})
+    with pytest.raises(ValueError):
+        load_config(overrides={"run": {"mode": "api", "backend": "ollama"}})
+
+
+def test_local_openrouter_run_is_guarded_but_never_analysable(tmp_path, repo_copy, local_or_yaml, env, fake_api,
+                                                              monkeypatch):
+    pytest.importorskip("psutil")
+    from swarmguard.safety import governor
+
+    monkeypatch.setattr(governor.shutil, "disk_usage", lambda p: SimpleNamespace(total=1000, used=500, free=500))
+    env = {k: v for k, v in env.items() if k != "SLURM_JOB_ID"}  # a laptop: no Slurm job
+    out = tmp_path / "runs"
+    o = runner.RunOptions(n=4, rounds=3, task="logic-grid:L4", impostor="scripted", claim="write", model="api-model-a",
+                          mode="local", backend="openrouter", seed=0, out=out, config=local_or_yaml)
+    oc = runner.execute_run(o, root=repo_copy, env=env, out=lambda s: None)
+    assert oc.result is not None and oc.result.rounds_completed == 3, oc.message
+    p1 = {c.name: c.status for c in oc.pass1.checks}
+    assert p1["api_key_file"] == "pass" and p1["api_spend"] == "pass"
+    p2 = {c.name: c.status for c in oc.pass2.checks}
+    assert p2["egress_allowlist"] == "pass" and p2["net_tcp_external"] == "waived"
+    rep = load_safety_report(oc.rd.file("safety_report.json"))
+    assert rep.mode == "local" and rep.api is None and rep.resources.spend_usd > 0
+    assert rep.safety_score < 1.0 and not is_analysable(rep)
+    assert "postflight problems" not in oc.message  # egress, spend and key-leak checks all passed
+    for p in oc.rd.entries():
+        assert KEY.encode() not in p.read_bytes()
+    assert runner.analyze(out, root=repo_copy, env=env, track="main").extra["n_included"] == 0
+    assert runner.analyze(out, root=repo_copy, env=env, track="api").extra["n_included"] == 0
+
+
+def test_local_openrouter_key_leak_reported(tmp_path, key_file, monkeypatch):
+    cfg = load_config(LOCAL_OR_YAML, overrides={"api": {"key_file": str(key_file)}})
+    rd = RunDir.create(tmp_path)
+    monkeypatch.setattr(postflight, "verify", lambda p: SimpleNamespace(ok=True, error=None))
+    rd.file("log.jsonl").write_text(json.dumps({"oops": KEY}) + "\n")
+    _, problems = postflight.run_postflight(
+        cfg, rd, pass1_ok=True, pass2_ok=True, probe_results=[],
+        governor_summary={"api": {"hosts": ["openrouter.ai"], "key_usage_end": 1.0}}, write=False)
+    assert any("API key found" in p for p in problems)
+
+
+def test_local_openrouter_needs_key_file(tmp_path, repo_copy, env):
+    cfg = load_config(LOCAL_OR_YAML, overrides={"api": {"key_file": str(tmp_path / "missing.key")}})
+    p1 = preflight.run_pass1(cfg, "local", root=repo_copy, env=env)
+    assert {c.name: c.status for c in p1.checks}["api_key_file"] == "fail" and not p1.ok

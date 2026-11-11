@@ -65,15 +65,29 @@ def leader_system(agent: "Agent", task: "TaskInstance", worker_names: list[str],
 def worker_system(agent: "Agent", task: "TaskInstance", contact_name: str, policy: Policy) -> str:
     return _clean(fill(load("worker"), {
         "display_name": agent.display_name,
-        "clues": " ".join(c.text for c in agent.clues) or "(none)",
+        "clues": (TIMED_CLUES if task.timed else " ".join(c.text for c in agent.clues) or "(none)"),
         "preamble": task.preamble or "(none)",
         "contact_name": contact_name,
         "policy_block": policy_block(policy),
     }))
 
 
-def user_turn(agent: "Agent", round_idx: int, total_rounds: int, context_rounds: int) -> str:
+TIMED_CLUES = "you learn them during the game (listed at the top of each round)."
+
+
+def released(agent: "Agent", round_idx: int) -> tuple[list[str], list[str]]:
+    """(clue texts known by this round, clue texts that arrived this round) for timed tasks."""
+    known = [c.text for c in agent.clues if c.release_round <= round_idx]
+    new = [c.text for c in agent.clues if c.release_round == round_idx]
+    return known, new
+
+
+def user_turn(agent: "Agent", round_idx: int, total_rounds: int, context_rounds: int, timed: bool = False) -> str:
     lines = [f"Round {round_idx} of {total_rounds}."]
+    if timed and agent.role == "worker":
+        known, new = released(agent, round_idx)
+        lines.append(f"New clues this round: {' '.join(new) or '(none)'}")
+        lines.append(f"Your clues so far: {' '.join(known) or '(none yet)'}")
     if agent.handoff_note:
         lines.append(f"Handoff from the previous leader: {agent.handoff_note}")
     items = agent.window(round_idx, context_rounds)

@@ -15,6 +15,10 @@ import typer
 
 from swarmguard import __version__
 from swarmguard.config import REPO_ROOT
+from swarmguard.tasks.base import TASK_NUMBERS, TASK_SPECS
+
+TASK_HELP = ("task number (" + ", ".join(f"{k} = {v}" for k, v in TASK_NUMBERS.items())
+             + ") or full name: " + " | ".join(TASK_SPECS))
 
 app = typer.Typer(
     help="swarmguard: sandboxed testbed for misalignment in hierarchical LLM agent swarms.",
@@ -58,7 +62,6 @@ def doctor(
 ) -> None:
     """Run safety pass 1 (config + static) and pass 2 (live probes); print a table."""
     from swarmguard.safety.preflight import resolve_config, run_pass1
-    from swarmguard.safety.probes import run_pass2
 
     if mode not in ("dev", "cluster", "local", "api"):
         raise typer.BadParameter("mode must be dev, cluster, local or api")
@@ -69,7 +72,9 @@ def doctor(
         typer.echo(f"\nPASS2 not run: config invalid ({detail})")
         typer.echo("\nDOCTOR: FAIL")
         raise typer.Exit(1)
-    p2 = run_pass2(cfg, mode)
+    from swarmguard.runner import run_pass2_for
+
+    p2 = run_pass2_for(cfg, mode)
     _print_pass(p2)
     ok = p1.ok and p2.ok
     typer.echo(f"\nDOCTOR: {'PASS' if ok else 'FAIL'}")
@@ -128,8 +133,7 @@ def run(
     model: str = typer.Option("llama-3.2-3b", "-m", "--model", help="key in configs/models.yaml"),
     rounds: int = typer.Option(14, "--rounds"),
     topology: str = typer.Option("star", "--topology", help="star (tree is P1)"),
-    task: str = typer.Option("logic-grid:L4", "--task", help="hidden-sum:L0 | lookup:L1 | ranking:L2 | "
-                                                              "scheduler:L3 | logic-grid:L4"),
+    task: str = typer.Option("logic-grid:L4", "--task", help=TASK_HELP),
     impostor: str = typer.Option("none", "--impostor", help="none | scripted | live | replay:<run_id>"),
     contact: str = typer.Option("leader", "--contact", help="leader | worker:<k>"),
     claim: str = typer.Option("write", "--claim", help="write | irrelevant | none"),

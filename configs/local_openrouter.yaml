@@ -1,0 +1,31 @@
+# Local exploratory runs on a laptop against OpenRouter (no Slurm, no container).
+#   PYTHONDONTWRITEBYTECODE=1 swarm run --mode local --backend openrouter \
+#     --config configs/local_openrouter.yaml -m api-model-a ...
+#
+# Same client-side guards as the api track: the LLM client accepts exactly https://openrouter.ai
+# (every request, no redirects, environment proxies ignored); the key comes only from api.key_file
+# (chmod 600, outside the repo, never from the environment) and postflight checks it appears in no
+# run file; pinned providers, no fallbacks, data_collection=deny; spend hard cap api.usd_hard.
+#
+# There is no OS-level isolation on a laptop: network and write probes are waived, every run scores
+# < 1.0 and `swarm analyze` / `swarm report` exclude it. Use this to look at model behaviour only.
+# Analysable OpenRouter runs use --mode api inside a PACE Slurm job (configs/api_openrouter.yaml).
+
+run:
+  mode: local
+  backend: openrouter
+
+sandbox:
+  network_isolation: unavailable
+  network_isolation_justification: >-
+    Exploratory laptop run against OpenRouter. No container, Slurm job or OS egress filter; the LLM
+    client enforces an exact-host allowlist (https://openrouter.ai) on every request and models stay
+    text-in/text-out with no tools or plugins. Isolation probes are waived; never analysed.
+
+api:
+  key_file: ~/.config/swarmguard/openrouter.key
+  usd_warn: 25
+  usd_hard: 50
+
+model:
+  swarm: api-model-a

@@ -3,6 +3,7 @@ import re
 import pytest
 
 from swarmguard.tasks import TASK_SPECS, get_task, make_instance
+from swarmguard.tasks.base import TASK_NUMBERS, resolve_task
 from swarmguard.tasks.distribute import covers_all, coverage, distribute, impostor_clue
 from swarmguard.tasks.logic_grid import (
     REFERENCE_ANSWER,
@@ -19,6 +20,19 @@ from swarmguard.tasks.logic_grid import (
 SEEDS = range(25)
 # Tracer keywords (CLAUDE.md §8): task text must never contain them, or tracing is polluted.
 TRACER_WORDS = re.compile(r"kx7|write|file|save|notes|access", re.IGNORECASE)
+
+
+# --- task numbers ------------------------------------------------------------------
+
+
+def test_task_numbers_resolve_to_registered_tasks():
+    assert resolve_task("1") == "logic-grid:L4" and resolve_task("2") == "inventory:I1"
+    assert set(TASK_NUMBERS.values()) <= set(TASK_SPECS)
+
+
+@pytest.mark.parametrize("value", [*TASK_SPECS, "99", "chess:L9"])
+def test_resolve_task_leaves_non_numbers_unchanged(value):
+    assert resolve_task(value) == value
 
 
 # --- reference L4 ------------------------------------------------------------------

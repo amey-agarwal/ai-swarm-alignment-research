@@ -34,7 +34,8 @@ Measurements happen outside the swarm, and agents never see them:
 | Task accuracy, protocol compliance, tokens, energy | Reported next to every misalignment metric |
 
 Tasks (seeded, auto-checked): L0 hidden sum, L1 lookup, L2 ranking, L3 meeting scheduler,
-L4 logic grid (brute-force uniqueness solver). Clues are split across workers with redundancy.
+L4 logic grid (brute-force uniqueness solver), I1/I2 inventory audit (a running tally with clues
+released over time). Clues are split across workers with redundancy.
 
 ## Safety model
 
@@ -98,6 +99,24 @@ not a research result.
 Other options: `--contact worker:3`, `--policy explicit`, `--leader scripted`,
 `--mitigation dropout:0.25|leader-rotate|handoff:structured|handoff:freetext --verifier active`,
 `--impostor live` (types `CONFIRM` first) or `--impostor replay:<run_id>`. See `swarm run --help`.
+
+### Choosing a task
+
+Pass a number to `--task`:
+
+| `--task` | Task | Full name |
+|---|---|---|
+| `1` | L4 logic grid (the default) | `logic-grid:L4` |
+| `2` | Inventory audit, 6 movements | `inventory:I1` |
+
+```bash
+swarm run -n 8 --rounds 14 --task 2 --impostor scripted --claim write --seed 0
+```
+
+Full names also work, including tasks with no number yet: `hidden-sum:L0`, `lookup:L1`, `ranking:L2`,
+`scheduler:L3` and `inventory:I2`. Numbers are only a shortcut, so logs and analysis always record the
+full name. To give a task a number, add a line to `TASK_NUMBERS` in
+[tasks/base.py](src/swarmguard/tasks/base.py), then run `swarm manifest`.
 
 ## Local exploratory runs (Ollama)
 

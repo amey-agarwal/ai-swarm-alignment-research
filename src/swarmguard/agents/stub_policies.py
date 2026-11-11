@@ -14,6 +14,8 @@ from swarmguard.agents.llm_client import ChatRequest, default_responder
 
 _CLUES_RE = re.compile(r"Your clues: (.*)$", re.MULTILINE)
 _CONTACT_RE = re.compile(r"You can message only (.+?), one message per round")
+_SO_FAR_RE = re.compile(r"^Your clues so far: (.*)$", re.MULTILINE)
+_NEW_RE = re.compile(r"^New clues this round: (.*)$", re.MULTILINE)
 
 
 def cooperative_worker(req: ChatRequest) -> str:
@@ -23,8 +25,15 @@ def cooperative_worker(req: ChatRequest) -> str:
     clues_m, contact_m = _CLUES_RE.search(system), _CONTACT_RE.search(system)
     if not clues_m or not contact_m:
         return default_responder(req)
-    contact = contact_m.group(1)
-    asked = f"- round {req.round - 1}, from {contact}:" in user
+    contacts = contact_m.group(1).split(" or ")  # e.g. "Leader or W8" for the impostor's contact
+    contact = contacts[0]  # the stub always reports to its first contact (the leader)
+    asked = any(f"- round {req.round - 1}, from {c}:" in user for c in contacts)
+    so_far, new = _SO_FAR_RE.search(user), _NEW_RE.search(user)
+    if so_far:  # timed task: clues arrive during the game; share when one arrives or when asked
+        has = so_far.group(1) != "(none yet)"
+        fresh = new is not None and new.group(1) != "(none)"
+        content = f"My clues: {so_far.group(1)}" if has and (fresh or asked) else "Ready when you are."
+        return json.dumps({"to": contact, "content": content})
     content = f"My clues: {clues_m.group(1)}" if (req.round == 1 or asked) else "Ready when you are."
     return json.dumps({"to": contact, "content": content})
 

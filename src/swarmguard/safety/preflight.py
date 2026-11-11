@@ -243,12 +243,15 @@ def check_mode_env(cfg: Config, env: Mapping[str, str]) -> CheckResult:
         return _r("mode_backend_env", True, "dev + stub")
     if cfg.run.mode == "local":
         problems = []
-        if cfg.run.backend != "ollama":
-            problems.append("local mode requires the ollama backend")
+        if cfg.run.backend not in ("ollama", "openrouter"):
+            problems.append("local mode requires the ollama or openrouter backend")
         if cfg.sandbox.network_isolation != "unavailable":
             problems.append("local mode requires sandbox.network_isolation=unavailable with a justification")
-        return _r("mode_backend_env", not problems,
-                  "; ".join(problems) or "local + ollama, NO OS isolation (exploratory; never analysable)")
+        if env.get("APPTAINER_CONTAINER") or env.get("SINGULARITY_CONTAINER"):
+            problems.append("local mode is for a laptop, not the container")
+        extra = f"; egress only to {cfg.api.host}" if cfg.run.backend == "openrouter" else ""
+        return _r("mode_backend_env", not problems, "; ".join(problems) or
+                  f"local + {cfg.run.backend}, NO OS isolation (exploratory; never analysable){extra}")
     if cfg.run.mode == "api":
         problems = []
         if cfg.run.backend != "openrouter":
@@ -308,17 +311,17 @@ def check_models(cfg: Config) -> CheckResult:
         for m in (sw, jd):
             if m is not None and not m.revision:
                 problems.append(f"{m.hf_id}: revision not pinned (required in cluster mode)")
-    if cfg.run.mode == "local" and sw is not None and not sw.ollama_tag:
-        problems.append(f"{sw.hf_id}: no ollama_tag (required in local mode)")
-    if cfg.run.mode == "api" and sw is not None:
+    if cfg.run.backend == "ollama" and sw is not None and not sw.ollama_tag:
+        problems.append(f"{sw.hf_id}: no ollama_tag (required for the ollama backend)")
+    if cfg.run.backend == "openrouter" and sw is not None:
         if not sw.openrouter_id:
             problems.append(f"{cfg.model.swarm}: not an OpenRouter model (needs openrouter_id + providers)")
         elif sw.is_placeholder:
             problems.append(f"{cfg.model.swarm}: placeholder model/provider in configs/models.yaml (fill in CHANGEME)")
-    if cfg.run.mode != "api" and sw is not None and sw.openrouter_id:
-        problems.append(f"{cfg.model.swarm}: OpenRouter models run only in api mode")
+    if cfg.run.backend != "openrouter" and sw is not None and sw.openrouter_id:
+        problems.append(f"{cfg.model.swarm}: OpenRouter models run only with the openrouter backend")
     detail = "; ".join(problems) or f"swarm={sw.hf_id}, judge={jd.hf_id}"  # type: ignore[union-attr]
-    if not problems and cfg.run.mode == "local":
+    if not problems and cfg.run.backend == "ollama":
         detail += f", ollama_tag={sw.ollama_tag} (quantized)"  # type: ignore[union-attr]
     return _r("models", not problems, detail)
 
@@ -447,7 +450,7 @@ def run_pass1(
     else:
         for name in ("mode_backend_env", "offline_env", "llm_host", "swarm_caps", "models", "routing", "canary_absent"):
             res.checks.append(_r(name, False, "config invalid"))
-    if cfg is not None and cfg.run.mode == "api":
+    if cfg is not None and cfg.run.backend == "openrouter":  # api mode, or local mode with OpenRouter
         res.checks += [check_api_key_file(cfg)]
         res.checks += [check_api_spend(cfg) if res.checks[-1].status == "pass"
                        else _r("api_spend", False, "not checked: key file invalid")]

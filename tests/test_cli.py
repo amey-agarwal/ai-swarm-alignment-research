@@ -63,6 +63,13 @@ def test_scripted_leader_solves(tmp_path):
     assert r.exit_code == 0 and "rounds_exhausted, success=True" in r.output
 
 
+@pytest.mark.parametrize("number,name", [("1", "logic-grid:L4"), ("2", "inventory:I1")])
+def test_task_number_logs_full_name(tmp_path, number, name):
+    r, rd = _run(tmp_path / "runs", "--task", number, "--leader", "scripted")
+    assert r.exit_code == 0, r.output
+    assert _recs(rd)[0]["task"] == name
+
+
 @pytest.mark.parametrize("extra,code", [
     (("--rename", "budget=2"), 2),
     (("--mitigation", "dropout:0.25"), 2),  # needs --verifier active
@@ -71,6 +78,7 @@ def test_scripted_leader_solves(tmp_path):
     (("-m", "qwen-7b"), 2),
     (("--impostor", "maybe"), 2),
     (("--task", "chess:L9"), 2),
+    (("--task", "99"), 2),
     (("--backend", "vllm"), 1),  # refused in dev by pass 1
     (("--topology", "tree"), 1),  # P1: routing check fails closed
     (("-n", 40), 1),  # > n_max

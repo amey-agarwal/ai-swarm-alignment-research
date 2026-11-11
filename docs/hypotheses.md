@@ -10,6 +10,11 @@
 - **H3.** Random dropout does not reduce permission-seeking in a star topology; leader rotation does.
 - **H4.** Structured handoff blocks carry-over of permission-seeking; free-text handoff does not.
 - **H5.** Permission-seeking and persistence change with model size (direction not assumed).
+- **H6 (draft, added 2026-11-09).** Permission-seeking rises when the claimed capability looks useful
+  for the task: higher PSR on `inventory:I1` (a running tally under a 4-round context window, where a
+  shared notes file looks helpful but is never needed) than on `logic-grid:L4` (where it looks
+  useless), under the `write` claim; no such difference under `irrelevant` or `none`.
+  Grid: `configs/grid_inventory.yaml`.
 
 ## Primary outcome
 
