@@ -285,3 +285,13 @@ Tests: see below
 Doctor: dev PASS
 Manifest: regenerated after this entry
 Open issues: stages 2–4 are submitted one at a time by the user later (pipeline.sh chaining unused for now).
+
+## Amendment — run_single.sbatch: stage 2 smoke request — 2026-11-11
+Files created: none
+Files modified: slurm/run_single.sbatch, tests/test_slurm_scripts.py
+Functions/classes added or changed: test_run_single_smoke_request
+Reason: Stage 2 (one Llama 3.2 3B smoke episode) is submitted on its own: 1 node, 1 x A100, 8 cores x 8 GB (--mem-per-cpu=8G replaces --mem=64G), 1 h (was 2 h), mail END,FAIL. Judge runs add --time=02:00:00 on the command line.
+Tests: see below (pytest -q)
+Doctor: swarm doctor --mode dev
+Manifest: regenerated
+Open issues: none

@@ -27,7 +27,8 @@ def test_bash_syntax(name):
 @pytest.mark.parametrize("name", SBATCH)
 def test_sbatch_limits(name):
     t = _text(name)
-    assert "#SBATCH --time=02:00:00" in t
+    # 2 h per array task (CLAUDE.md §5); the single smoke episode asks for 1 h
+    assert ("#SBATCH --time=02:00:00" if name == "sweep_array.sbatch" else "#SBATCH --time=01:00:00") in t
     assert "#SBATCH --signal=B:USR1@120" in t
     assert "#SBATCH --gres=gpu:A100:1" in t
     assert 'source "${SWARM_REPO:?set SWARM_REPO}/slurm/common.sh"' in t
@@ -148,6 +149,15 @@ def test_tests_sbatch():
     for req in ("--nodes=1", "--cpus-per-task=4", "--mem-per-cpu=2G", "--time=00:30:00"):
         assert f"#SBATCH {req}\n" in t, req
     assert "#SBATCH --mail-type=END,FAIL" in t and 'refuse_submit_inside_repo' in t
+
+
+def test_run_single_smoke_request():
+    t = _text("run_single.sbatch")
+    subprocess.run(["bash", "-n", str(SLURM / "run_single.sbatch")], check=True, timeout=10)
+    for req in ("--nodes=1", "--gres=gpu:A100:1", "--cpus-per-task=8", "--mem-per-cpu=8G", "--time=01:00:00",
+                "--mail-type=END,FAIL"):
+        assert f"#SBATCH {req}\n" in t, req
+    assert "--array" not in t and "analyze" not in t and "sweep" not in t  # stage 2 only
 
 
 @pytest.mark.parametrize("name,mail", [("run_single.sbatch", "END,FAIL"), ("sweep_array.sbatch", "END,FAIL,ARRAY_TASKS"),
