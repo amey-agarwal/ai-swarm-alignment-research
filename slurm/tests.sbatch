@@ -9,7 +9,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=8G
+#SBATCH --mem-per-cpu=2G
 #SBATCH --time=00:30:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --output=slurm-%x-%j.out

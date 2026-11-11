@@ -238,3 +238,12 @@ Tests: see summary below (run after this entry)
 Doctor: dev PASS
 Manifest: regenerated after this entry
 Open issues: (1) Per-array-task emails: 12 for the default array (0-11), 20 for the full grid. (2) Calibration (calib stage) is optional and does not change grid_core.yaml automatically. (3) The judge is not in the pipeline: it needs per-run submission and, for κ, human labels that do not exist yet.
+
+## Extra — tests.sbatch request matches the approved allocation — 2026-11-10 19:08
+Files modified: slurm/tests.sbatch, tests/test_slurm_scripts.py, MANIFEST.json
+Functions/classes added or changed: none
+Reason: Only stage 1 can be submitted now, as its own job: CPU, 1 node, 4 cores, 2 GB/core, 30 min. --mem=8G became --mem-per-cpu=2G (same total), and the test pins the request.
+Tests: see below
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: stages 2–4 are submitted one at a time by the user later (pipeline.sh chaining unused for now).

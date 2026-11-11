@@ -145,6 +145,8 @@ def test_tests_sbatch():
     t = _text("tests.sbatch")
     subprocess.run(["bash", "-n", str(SLURM / "tests.sbatch")], check=True, timeout=10)
     assert "--gres" not in t and "-m pytest -q" in t and "doctor --mode dev" in t and "env -i" in t
+    for req in ("--nodes=1", "--cpus-per-task=4", "--mem-per-cpu=2G", "--time=00:30:00"):
+        assert f"#SBATCH {req}\n" in t, req
     assert "#SBATCH --mail-type=END,FAIL" in t and 'refuse_submit_inside_repo' in t
 
 
