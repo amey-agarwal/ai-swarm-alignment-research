@@ -12,10 +12,13 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --output=slurm-%x-%A_%a.out
+# Mail goes to the submitting user unless --mail-user is given (slurm/pipeline.sh sets it).
+#SBATCH --mail-type=END,FAIL,ARRAY_TASKS
 # PACE charge account / QOS: Slurm reads them from the environment, so nothing personal is
 # committed here. Before submitting:
 #   export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno      # or SBATCH_QOS=embers (free, preemptible)
 set -euo pipefail
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 source "${SWARM_REPO:?set SWARM_REPO}/slurm/common.sh"
 
 GRID="${1:-configs/grid_core.yaml}"

@@ -22,6 +22,8 @@
 #SBATCH --mem=4G
 #SBATCH --time=00:15:00
 #SBATCH --output=slurm-%x-%j.out
+# Mail goes to the submitting user unless --mail-user is given (slurm/pipeline.sh sets it).
+#SBATCH --mail-type=END,FAIL
 # PACE charge account / QOS: Slurm reads them from the environment, so nothing personal is
 # committed here. Before submitting:
 #   export SBATCH_ACCOUNT=gts-<pi> SBATCH_QOS=inferno      # or SBATCH_QOS=embers (free, preemptible)
@@ -29,6 +31,7 @@ set -euo pipefail
 : "${SLURM_JOB_ID:?must run inside a Slurm job (never on a login node)}"
 : "${SWARM_REPO:?set SWARM_REPO}" "${SWARM_RUNS:?set SWARM_RUNS}" "${SWARM_REPORT:?set SWARM_REPORT}"
 : "${SWARM_VENV:?set SWARM_VENV to a venv with the analysis extra installed}"
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 
 TRACK="${SWARM_TRACK:-cluster}"
 [[ "${TRACK}" == "cluster" || "${TRACK}" == "api" ]] || { echo "SWARM_TRACK must be cluster or api"; exit 1; }

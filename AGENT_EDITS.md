@@ -257,3 +257,31 @@ Tests: 1138 passed
 Doctor: PASS (dev), run with CLAUDE_CODE_MESSAGING_TOKEN unset for the command as the README describes; that variable comes from the Claude Code shell and otherwise fails no_secrets
 Manifest: 132 files
 Open issues: 2 maps to inventory:I1; inventory:I2 is available by name only.
+## Extra — PACE readiness fixes: manifest re-baseline, submit-dir guard — 2026-11-10 18:28
+Files created: slurm/submit_guard.sh
+Files modified: slurm/run_single.sbatch, slurm/sweep_array.sbatch, slurm/analyze.sbatch, slurm/api_check.sbatch, slurm/api_sweep.sbatch, PACE-Checks.sh, README.md, tests/test_slurm_scripts.py, MANIFEST.json
+Functions/classes added or changed: refuse_submit_inside_repo (bash)
+Reason: (1) Commit a8e422c had a MANIFEST.json that no longer matched AGENT_EDITS.md (the previous entry was appended after the manifest was regenerated), so pass 1 failed for every run; re-baselined. (2) Slurm writes slurm-*.out into the submit directory; submitting from the repo root put an unexpected file in the manifest-checked tree and would fail every job's pass 1. All sbatch scripts now refuse at once with instructions, the README submits from $SWARM_RUNS with $SWARM_REPO/slurm/... paths, and PACE-Checks.sh writes its mail-test logs to $HOME.
+Tests: see summary line below (run after this entry)
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: (1) Alternative to the guard: exclude slurm-*.out in safety/integrity.py (protected; needs "approved: edit"). (2) docs/hypotheses.md is still marked DRAFT: finalise and commit before real runs. (3) data/labels has no human labels, so the judge κ gate cannot pass: reports will use the tracer outcome. (4) grid_core.yaml task level (logic-grid:L4) is a placeholder until the calibration pilot. (5) OpenRouter track on standby: only --mode api --backend openrouter (both required), swarm spend, or the api_*.sbatch scripts touch it; current key returns 401 "User not found".
+
+## Extra — One-command cluster pipeline with email checkpoints — 2026-11-10 18:41
+Files created: slurm/pipeline.sh, slurm/tests.sbatch
+Files modified: slurm/run_single.sbatch, slurm/sweep_array.sbatch, slurm/analyze.sbatch, tests/test_slurm_scripts.py, README.md, MANIFEST.json
+Functions/classes added or changed: pipeline.sh submit() (bash)
+Reason: User asked to run all jobs and tests sequentially with an email on every completed job and on errors. pipeline.sh chains tests (CPU) -> smoke (GPU) -> grid array (GPU) -> report (CPU) with afterok/afterany dependencies, --kill-on-invalid-dep=yes, and --mail-type=END,FAIL (+ARRAY_TASKS for arrays) to SWARM_NOTIFY_EMAIL; the job files default to END,FAIL mail to the submitting user. The API track is not part of the pipeline (standby).
+Tests: see summary below (run after this entry)
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: (1) Per-array-task emails: 12 for the default array (0-11), 20 for the full grid. (2) Calibration (calib stage) is optional and does not change grid_core.yaml automatically. (3) The judge is not in the pipeline: it needs per-run submission and, for κ, human labels that do not exist yet.
+
+## Extra — tests.sbatch request matches the approved allocation — 2026-11-10 19:08
+Files modified: slurm/tests.sbatch, tests/test_slurm_scripts.py, MANIFEST.json
+Functions/classes added or changed: none
+Reason: Only stage 1 can be submitted now, as its own job: CPU, 1 node, 4 cores, 2 GB/core, 30 min. --mem=8G became --mem-per-cpu=2G (same total), and the test pins the request.
+Tests: see below
+Doctor: dev PASS
+Manifest: regenerated after this entry
+Open issues: stages 2–4 are submitted one at a time by the user later (pipeline.sh chaining unused for now).

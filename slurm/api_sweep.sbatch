@@ -29,6 +29,7 @@ set -euo pipefail
 : "${SLURM_JOB_ID:?must run inside a Slurm job (never on a login node)}"
 : "${SWARM_REPO:?set SWARM_REPO}" "${SWARM_VENV:?set SWARM_VENV}" "${SWARM_RUNS_API:?set SWARM_RUNS_API}"
 : "${SWARM_NOTIFY_EMAIL:?set SWARM_NOTIFY_EMAIL for spend alerts}"
+source "${SWARM_REPO:?set SWARM_REPO}/slurm/submit_guard.sh" && refuse_submit_inside_repo
 GRID="${1:-configs/grid_openrouter.yaml}"
 CONFIG="${SWARM_API_CONFIG:-configs/api_openrouter.yaml}"
 PER_JOB="${TASKS_PER_JOB:-10}"

@@ -90,8 +90,8 @@ echo "job ${SLURM_JOB_ID} on $(hostname) at $(date)"
 sleep 60
 echo "done at $(date)"
 EOF
-sbatch -A "$ACCOUNT" -q "$QOS" --mail-type=BEGIN,END,FAIL --mail-user="$GT_EMAIL" ~/mailtest.sbatch
-sbatch -A "$ACCOUNT" -q "$QOS" -t 00:02:00 --mem=256M -J mailfail \
+sbatch -A "$ACCOUNT" -q "$QOS" -o "$HOME/%x-%j.out" --mail-type=BEGIN,END,FAIL --mail-user="$GT_EMAIL" ~/mailtest.sbatch
+sbatch -A "$ACCOUNT" -q "$QOS" -t 00:02:00 --mem=256M -J mailfail -o "$HOME/%x-%j.out" \
     --mail-type=FAIL --mail-user="$GT_EMAIL" --wrap="exit 1"
 squeue -u "$USER"
 
