@@ -28,7 +28,9 @@ swarm_launch() {
     job_tmp="${TMPDIR:-/tmp}/swarmguard-${SLURM_JOB_ID}"
     mkdir -p "${job_tmp}"/{hf,vllm,cache,tmp}
     mkdir -p "${SWARM_RUNS}"
-    trap 'rm -rf "${job_tmp}"' EXIT
+    # Expand job_tmp now: it is local and gone (unbound under set -u) when the EXIT trap fires.
+    # shellcheck disable=SC2064
+    trap "rm -rf $(printf '%q' "${job_tmp}")" EXIT
 
     # Random free port on 127.0.0.1 and a random per-job API key (never enters a prompt).
     port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
